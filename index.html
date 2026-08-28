@@ -1,0 +1,2249 @@
+<!doctype html>
+<html lang="en"><head><script data-od-sandbox-shim>(function(){
+  function makeStore(){
+    var data = {};
+    var api = {
+      getItem: function(k){ return Object.prototype.hasOwnProperty.call(data, k) ? data[k] : null; },
+      setItem: function(k, v){ data[k] = String(v); },
+      removeItem: function(k){ delete data[k]; },
+      clear: function(){ data = {}; },
+      key: function(i){ return Object.keys(data)[i] || null; }
+    };
+    Object.defineProperty(api, 'length', { get: function(){ return Object.keys(data).length; } });
+    return api;
+  }
+  function tryShim(name){
+    var works = false;
+    try { works = !!window[name] && typeof window[name].getItem === 'function'; void window[name].length; }
+    catch (_) { works = false; }
+    if (works) return;
+    try { Object.defineProperty(window, name, { configurable: true, value: makeStore() }); }
+    catch (_) { try { window[name] = makeStore(); } catch (__) {} }
+  }
+  tryShim('localStorage');
+  tryShim('sessionStorage');
+  document.addEventListener('click', (e) => {
+    if (!e.target || !(e.target instanceof Element)) return;
+    var link = e.target.closest('a[href]');
+    if (!link) return;
+    var href = link.getAttribute('href');
+    if (href === null) return;
+    var isAnchor = href.startsWith('#') || href === '';
+    if (isAnchor) {
+      e.preventDefault();
+      if (href === '' || href === '#') {
+        window.scrollTo({ top: 0 });
+        history.replaceState(null, '', ' ');
+      } else {
+        var targetId = href.slice(1);
+        var target = targetId ? document.getElementById(targetId) : null;
+        if (target) {
+          target.scrollIntoView();
+          location.hash === href && history.replaceState(null, '', ' ');
+          location.hash = href;
+        }
+      }
+    } else if (link.getAttribute('target') === '_blank') {
+      e.preventDefault();
+      let safe = false;
+      try {
+        var url = new URL(href, location.href);
+        safe =
+          url.protocol === 'http:' ||
+          url.protocol === 'https:' ||
+          url.protocol === 'mailto:';
+      } catch (_) {}
+      safe && window.open(href, '_blank', 'noopener,noreferrer');
+    }
+  });
+})();</script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>f.ads — show me what's cool</title>
+  <style>
+    /* ===========================================================
+       Deck framework — DO NOT EDIT the rules in this <style> block.
+       Edit only inside the second <style> block below (per-deck
+       styles) and inside <section class="slide"> bodies.
+
+       Contract this framework provides:
+         - 1920×1080 fixed canvas, scaled to fit the viewport
+         - Only .slide.active is visible at a time
+         - Prev/next + counter rendered outside the scaled stage
+         - Keyboard (← → space PgUp PgDn Home End), click, and stored
+           position survive iframe focus quirks
+         - "Save as PDF" produces a multi-page vertical PDF, one slide
+           per page, by toggling every slide visible under @media print
+       =========================================================== */
+    :root {
+      /* SLOT: theme tokens */
+      --bg:      oklch(98% 0.004 95);
+      --surface: oklch(100% 0.002 95);
+      --fg:      oklch(20% 0.018 70);
+      --muted:   oklch(48% 0.012 70);
+      --border:  oklch(90% 0.006 95);
+      --accent:  oklch(52% 0.10 28);
+      --shell:   #08090d;
+
+      --font-display: 'Iowan Old Style', 'Charter', Georgia, serif;
+      --font-body:    -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      --font-mono:    ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--shell);
+      color: var(--fg);
+      font: 18px/1.5 -apple-system, system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    .deck-shell {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+    }
+    .deck-stage {
+      width: 1920px;
+      height: 1080px;
+      background: var(--bg);
+      position: relative;
+      transform-origin: top left;
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+    }
+    .slide {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+    .slide:not(.active) { display: none !important; }
+    :where(.slide.active) { display: flex; flex-direction: column; }
+
+    .deck-counter {
+      position: fixed;
+      bottom: 22px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(10, 14, 26, 0.92);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      padding: 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #fff;
+      font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.18em;
+      z-index: 1000;
+    }
+    .deck-counter button {
+      width: 36px; height: 36px;
+      background: transparent;
+      color: #fff;
+      border: 0;
+      border-radius: 50%;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: background 0.15s;
+    }
+    .deck-counter button:hover { background: rgba(255, 255, 255, 0.12); }
+    .deck-counter button[disabled] { opacity: 0.3; cursor: default; }
+    .deck-counter .deck-count {
+      padding: 0 14px;
+      letter-spacing: 0.22em;
+    }
+    .deck-counter .deck-count .total { color: rgba(255, 255, 255, 0.5); }
+    .deck-hint {
+      position: fixed;
+      bottom: 26px;
+      right: 28px;
+      color: rgba(255, 255, 255, 0.4);
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      z-index: 999;
+      pointer-events: none;
+    }
+
+    @media print {
+      @page { size: 1920px 1080px; margin: 0; }
+      html, body {
+        width: 1920px !important;
+        height: auto !important;
+        overflow: visible !important;
+        background: #fff !important;
+      }
+      .deck-shell {
+        position: static !important;
+        display: block !important;
+        inset: auto !important;
+      }
+      .deck-stage {
+        width: 1920px !important;
+        height: auto !important;
+        transform: none !important;
+        box-shadow: none !important;
+        position: static !important;
+      }
+      .slide {
+        display: flex !important;
+        position: relative !important;
+        inset: auto !important;
+        width: 1920px !important;
+        height: 1080px !important;
+        page-break-after: always;
+        break-after: page;
+      }
+      .slide:last-child { page-break-after: auto; break-after: auto; }
+      .deck-counter, .deck-hint { display: none !important; }
+    }
+  </style>
+  <style>
+    /* SLOT: per-deck styles — f.ads hyperframes, editorial, soft & spaced */
+
+    .hf { padding: 110px 150px; gap: 0; }
+
+    /* ink bookends — slides 01 and 08 flip to dark ink by re-scoping the
+       same tokens; every descendant that reads var(--*) re-colors itself */
+    .hf.s-ink {
+      --bg: oklch(21% 0.015 70);
+      --surface: oklch(25% 0.016 70);
+      --fg: oklch(96% 0.006 95);
+      --muted: oklch(72% 0.01 80);
+      --border: oklch(35% 0.014 70);
+      --accent: oklch(70% 0.13 33);
+      background: var(--bg);
+      color: var(--fg);
+    }
+    .hf.s-ink .kicker { color: var(--muted); }
+    .hf.s-ink button.soft.primary { color: oklch(20% 0.018 70); }
+
+    /* ghost folio — one oversized numeral per slide, magazine-style */
+    .hf::after {
+      content: attr(data-folio);
+      position: absolute;
+      top: 64px;
+      right: 88px;
+      font: 500 260px/1 var(--font-display);
+      letter-spacing: -0.04em;
+      color: var(--fg);
+      opacity: 0.055;
+      pointer-events: none;
+    }
+
+    .kicker {
+      font: 500 24px/1 var(--font-mono);
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .hf-h {
+      font-family: var(--font-display);
+      font-weight: 500;
+      font-size: 72px;
+      line-height: 1.08;
+      letter-spacing: -0.02em;
+      margin-top: 28px;
+      max-width: 22ch;
+      text-wrap: pretty;
+    }
+    .lead {
+      font-family: var(--font-body);
+      font-size: 28px;
+      line-height: 1.55;
+      color: var(--muted);
+      max-width: 54ch;
+      margin-top: 30px;
+      text-wrap: pretty;
+    }
+    .hf-body { flex: 1; display: flex; flex-direction: column; justify-content: center; min-height: 0; }
+    .hf-foot {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font: 400 24px/1 var(--font-mono);
+      color: var(--muted); letter-spacing: 0.02em;
+      padding-top: 40px;
+      flex-shrink: 0;
+      max-width: 100%;
+      gap: 32px;
+    }
+    .hf-foot span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hf h1, .hf h2, .hf h3, .hf p, .hf button, .hf span, .hf div { overflow-wrap: anywhere; }
+    .rule-top { border-top: 1px solid var(--border); }
+
+    /* --- generic soft control chrome --------------------------------- */
+    .ctl-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+    button.soft {
+      font: 500 26px/1 var(--font-body);
+      letter-spacing: 0.02em;
+      color: var(--fg);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 18px 34px;
+      cursor: pointer;
+      transition: border-color .18s, background .18s, transform .1s;
+    }
+    button.soft:hover { border-color: var(--muted); }
+    button.soft:active { transform: translateY(2px); }
+    button.soft.primary { background: var(--accent); border-color: var(--accent); color: oklch(98% 0.004 95); }
+
+    input[type="range"].soft-range {
+      -webkit-appearance: none; appearance: none;
+      width: 340px; height: 2px; border-radius: 2px;
+      background: var(--border); outline: none; cursor: pointer;
+    }
+    input[type="range"].soft-range::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--surface); border: 1.5px solid var(--fg);
+    }
+    input[type="range"].soft-range::-moz-range-thumb {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--surface); border: 1.5px solid var(--fg);
+    }
+    .ctl-label { font: 400 24px/1.3 var(--font-mono); color: var(--muted); letter-spacing: 0.02em; }
+
+    /* --- 01 cover ------------------------------------------------------ */
+    .cover-mast { display: flex; justify-content: space-between; align-items: baseline; }
+    .cover-word {
+      font-family: var(--font-display);
+      font-size: 140px; font-weight: 500;
+      letter-spacing: -0.03em; line-height: 1.0;
+    }
+    .cover-word .worddot { color: var(--accent); }
+    .cover-sub {
+      font-family: var(--font-display);
+      font-size: 64px; font-weight: 400; font-style: italic;
+      letter-spacing: -0.015em; line-height: 1.15;
+      margin-top: 44px; color: var(--fg);
+    }
+    .cover-sub .swap { color: var(--accent); font-style: normal; display: inline-block; transition: opacity .38s ease; }
+    .seg { display: inline-flex; gap: 8px; margin-top: 56px; padding: 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+    .seg button {
+      font: 500 26px/1 var(--font-body); letter-spacing: 0.02em;
+      color: var(--muted); background: transparent; border: 0;
+      border-radius: 999px; padding: 16px 30px; cursor: pointer;
+      transition: color .15s, background .15s;
+    }
+    .seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+    .ex-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 24px;
+      margin-top: 54px;
+      max-width: 1460px;
+    }
+    .ex-card {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      padding: 26px 30px;
+    }
+    .ex-kind {
+      font: 500 18px/1 var(--font-mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .ex-title {
+      font: 500 30px/1.25 var(--font-display);
+      letter-spacing: -0.01em;
+      margin-top: 14px;
+      text-wrap: pretty;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .ex-card {
+        animation: intent-in .45s cubic-bezier(.25, .9, .3, 1) both;
+        animation-delay: calc(var(--d, 0) * 90ms);
+      }
+    }
+
+    /* --- 02 switch: their feed / your frame ----------------------------- */
+    .duo { display: grid; grid-template-columns: 640px 1fr; gap: 100px; align-items: center; flex: 1; min-height: 0; }
+    .odswitch { display: inline-flex; align-items: center; gap: 24px; margin-top: 52px; cursor: pointer; user-select: none; }
+    .odswitch .track {
+      width: 108px; height: 58px; border-radius: 999px;
+      border: 1.5px solid var(--fg); background: var(--surface);
+      position: relative; transition: background .2s;
+    }
+    .odswitch .knob {
+      position: absolute; top: 5px; left: 6px;
+      width: 44px; height: 44px; border-radius: 50%;
+      background: var(--fg); transition: left .22s cubic-bezier(.5,0,.2,1);
+    }
+    .odswitch[aria-checked="true"] .knob { left: 54px; }
+    .odswitch .sw-label { font: 500 28px/1.2 var(--font-body); letter-spacing: 0.02em; }
+    .feedstack { display: flex; flex-direction: column; gap: 22px; }
+    .fcard {
+      background: var(--surface); border: 1px solid var(--border);
+      transition: all .5s cubic-bezier(.4,0,.2,1);
+    }
+    .fcard .fc-meta { font: 500 24px/1 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; transition: all .5s; }
+    .fcard .fc-title { transition: all .5s; text-wrap: pretty; }
+    .fcard .fc-bait { font: 600 24px/1 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase; transition: opacity .4s, max-height .4s; overflow: hidden; }
+    /* their feed: cramped + loud */
+    .mode-theirs .fcard { padding: 20px 26px; border-radius: 4px; }
+    .mode-theirs .fc-meta { color: var(--fg); }
+    .mode-theirs .fc-title { font: 700 30px/1.15 var(--font-body); letter-spacing: 0; margin-top: 8px; }
+    .mode-theirs .fc-bait { opacity: 1; max-height: 40px; margin-top: 10px; color: var(--fg); }
+    /* your frame: calm + spaced */
+    .mode-yours .fcard { padding: 42px 48px; border-radius: 18px; }
+    .mode-yours .fc-meta { color: var(--muted); }
+    .mode-yours .fc-title { font: 500 38px/1.25 var(--font-display); letter-spacing: -0.01em; margin-top: 16px; }
+    .mode-yours .fc-bait { opacity: 0; max-height: 0; margin-top: 0; }
+
+    /* --- 03 tabs: structure / card / reader ------------------------------ */
+    .tabs { display: inline-flex; gap: 36px; border-bottom: 1px solid var(--border); margin-top: 40px; }
+    .tabs button {
+      font: 500 27px/1 var(--font-body); letter-spacing: 0.02em;
+      color: var(--muted); background: none; border: 0;
+      padding: 0 4px 22px; cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: color .15s, border-color .15s;
+    }
+    .tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+    .pane-wrap { margin-top: 40px; min-height: 420px; }
+    .pane { display: none; }
+    .pane.on { display: block; }
+    .schema {
+      font: 400 25px/1.7 var(--font-mono);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 44px 52px; max-width: 1100px;
+      letter-spacing: 0.01em; white-space: pre; color: var(--fg);
+    }
+    .schema .k { color: var(--muted); }
+    .rcard {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 18px; padding: 48px 56px; max-width: 880px;
+    }
+    .rcard .fc-meta { font: 500 24px/1 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+    .rcard h3 { font: 500 44px/1.2 var(--font-display); letter-spacing: -0.015em; margin-top: 18px; }
+    .rcard p { font: 400 26px/1.55 var(--font-body); color: var(--muted); margin-top: 18px; max-width: 52ch; }
+    .reader { max-width: 900px; padding: 12px 0; }
+    .reader h3 { font: 500 54px/1.15 var(--font-display); letter-spacing: -0.02em; }
+    .reader .byline { font: 400 24px/1 var(--font-mono); color: var(--muted); letter-spacing: 0.07em; margin-top: 22px; text-transform: uppercase; }
+    .reader p { font: 400 29px/1.65 var(--font-display); margin-top: 30px; max-width: 58ch; }
+
+    /* --- 04 + 07 morph benches ------------------------------------------ */
+    .cloud-grid { display: grid; grid-template-columns: repeat(6, 1fr); grid-auto-rows: 216px; gap: 26px; margin-top: 40px; }
+    .mc {
+      position: relative; overflow: hidden;
+      grid-column: span 2;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 26px 32px;
+      transition: transform .55s cubic-bezier(.4,0,.2,1), background .55s ease,
+                  color .55s ease, border-color .55s ease, border-width .4s ease,
+                  opacity .45s ease;
+    }
+    .mc-off { display: none; }
+    .mc .frame-name {
+      position: absolute; right: 20px; bottom: 14px;
+      font: 400 24px/1 var(--font-mono); letter-spacing: 0.04em; opacity: .45;
+    }
+    /* frame concept 01 — mono terminal */
+    .mc-terminal { background: oklch(25% 0.015 260); border-color: oklch(35% 0.015 260); color: oklch(93% 0.01 120); font: 400 24px/1.7 var(--font-mono); }
+    .mc-terminal .t-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mc-terminal .t-line::before { content: "> "; opacity: .5; }
+    .mc-terminal .t-cursor { display: inline-block; width: 13px; height: 26px; background: oklch(93% 0.01 120); vertical-align: -4px; }
+    @media (prefers-reduced-motion: no-preference) {
+      .mc-terminal .t-cursor { animation: blink 1.1s steps(1) infinite; }
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+    /* frame concept 02 — serif essay */
+    .mc-editorial .e-kicker { font: 500 24px/1 var(--font-mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+    .mc-editorial .e-head { font: 500 31px/1.15 var(--font-display); letter-spacing: -0.015em; margin-top: 12px; text-wrap: pretty; }
+    .mc-editorial .e-head::first-letter { font-size: 52px; float: left; line-height: .9; padding-right: 8px; }
+    .mc-editorial .e-rule { border-top: 1px solid var(--border); margin-top: 16px; width: 64px; transition: border-color .55s; }
+    /* frame concept 03 — data ticker */
+    .mc-data { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+    .mc-data .d-title { font: 500 24px/1 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+    .mc-data .d-row { display: grid; grid-template-columns: 1fr 90px 110px; gap: 14px; align-items: center; font-size: 24px; padding: 7px 0; border-top: 1px solid var(--border); transition: border-color .55s; }
+    .mc-data .d-num { text-align: right; }
+    .mc-data .d-bar { height: 5px; background: var(--border); border-radius: 2px; overflow: hidden; }
+    .mc-data .d-fill { display: block; height: 100%; background: var(--fg); transition: width .6s cubic-bezier(.4,0,.2,1), background .55s; }
+    /* frame concept 04 — type poster */
+    .mc-poster { border: 2px solid var(--fg); border-radius: 0; display: flex; flex-direction: column; justify-content: space-between; }
+    .mc-poster .p-head { font: 600 46px/1.02 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase; max-width: 9ch; transition: letter-spacing .5s ease; }
+    .mc-poster .p-tag { font: 400 24px/1 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+    /* frame concept 05 — chat bubbles */
+    .mc-soft { border-radius: 26px; display: flex; flex-direction: column; gap: 12px; justify-content: center; }
+    .mc-soft .b { max-width: 88%; font: 400 25px/1.35 var(--font-body); background: var(--bg); border: 1px solid var(--border); border-radius: 20px 20px 20px 6px; padding: 14px 22px; }
+    .mc-soft .b.me { align-self: flex-end; border-radius: 20px 20px 6px 20px; background: var(--fg); color: var(--bg); border-color: var(--fg); }
+    /* frame concept 06 — ruled zine card */
+    .mc-zine { background: repeating-linear-gradient(oklch(100% 0.002 95), oklch(100% 0.002 95) 34px, oklch(92% 0.006 95) 35px); }
+    .mc-zine .z-stamp { display: inline-block; font: 500 24px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; border: 1.5px solid var(--fg); padding: 8px 14px; transform: rotate(-2deg); transition: transform .5s ease, border-color .55s; }
+    .mc-zine .z-title { font: 400 32px/1.2 var(--font-display); font-style: italic; margin-top: 16px; text-wrap: pretty; }
+    /* universal morph state — theme inversion */
+    .mc.flip { background: oklch(24% 0.018 70); color: oklch(96% 0.004 95); border-color: oklch(38% 0.018 70); }
+    .mc.flip .e-kicker, .mc.flip .d-title, .mc.flip .p-tag { color: oklch(70% 0.01 95); }
+    .mc.flip .d-fill { background: oklch(96% 0.004 95); }
+    .mc.flip .d-row, .mc.flip .e-rule { border-color: oklch(38% 0.018 70); }
+    .mc.flip .b { color: var(--fg); }
+    .mc.flip .z-stamp { border-color: oklch(96% 0.004 95); }
+    .mc-poster.flip { border-color: oklch(96% 0.004 95); }
+    .oplog {
+      font: 400 12px/1.4 var(--font-mono);
+      color: var(--muted); letter-spacing: 0.02em;
+      margin-top: 34px; min-height: 17px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+    }
+    .oplog b { color: var(--fg); font-weight: 500; }
+    /* focus ring for the card currently being morphed */
+    .mc-focus { outline: 2px solid var(--fg); outline-offset: 4px; }
+    .cloud-grid.focusing .mc:not(.mc-focus) { opacity: .55; }
+
+    .typecloud {
+      display: flex; flex-wrap: wrap; align-items: baseline;
+      gap: 18px 34px; margin-top: 54px; max-width: 1500px; min-height: 380px;
+      align-content: center;
+    }
+    .typecloud span {
+      font-family: var(--font-display);
+      transition: font-size .5s ease, opacity .5s ease, color .5s ease, letter-spacing .5s ease;
+      line-height: 1.1; white-space: nowrap;
+    }
+
+    /* --- 05 stepper ------------------------------------------------------ */
+    .stage-split { display: grid; grid-template-columns: 760px 1fr; gap: 110px; align-items: center; flex: 1; min-height: 0; }
+    .opcard {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 30px 36px; max-width: 660px;
+      transition: padding .4s ease, background .4s ease, border-radius .4s ease;
+    }
+    .opcard .oc-badge {
+      display: inline-block; font: 600 24px/1 var(--font-body);
+      letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg);
+      transition: opacity .3s, max-height .3s;
+    }
+    .opcard .oc-title { font: 600 32px/1.2 var(--font-body); margin-top: 14px; transition: all .4s; }
+    .opcard.serif .oc-title { font: 500 36px/1.25 var(--font-display); letter-spacing: -0.01em; }
+    .opcard .oc-meta { font: 400 24px/1 var(--font-mono); color: var(--muted); margin-top: 18px; letter-spacing: 0.04em; display: none; }
+    .opcard.metaon .oc-meta { display: block; }
+    .opcard.badgeoff .oc-badge { display: none; }
+    .opcard.relaxed { padding: 52px 58px; }
+    .opcard.rounded { border-radius: 18px; }
+    .opcode {
+      font: 400 26px/2.1 var(--font-mono); letter-spacing: 0.01em;
+      color: var(--border);
+      counter-reset: op;
+    }
+    .opcode div { transition: color .25s; }
+    .opcode div.done { color: var(--muted); }
+    .opcode div.now { color: var(--fg); }
+    .opcode div.now::after { content: " ◀"; color: var(--fg); }
+    .step-ctl { display: flex; align-items: center; gap: 24px; margin-top: 44px; }
+    .step-ind { font: 400 25px/1 var(--font-mono); color: var(--muted); letter-spacing: 0.06em; }
+
+    /* --- 06 goal chips + stream ------------------------------------------ */
+    .algorithm-body { justify-content: flex-start; padding-top: 8px; }
+    .algorithm-body .hf-h { font-size: 58px; max-width: 24ch; }
+    .algorithm-body .lead { font-size: 25px; line-height: 1.45; max-width: 68ch; margin-top: 16px; }
+    .chips { display: flex; gap: 14px; margin-top: 24px; flex-wrap: wrap; }
+    .chips button {
+      font: 500 23px/1 var(--font-body); letter-spacing: 0.02em;
+      color: var(--fg); background: var(--surface);
+      border: 1px solid var(--border); border-radius: 999px;
+      padding: 16px 26px; cursor: pointer; transition: all .18s;
+    }
+    .chips button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+    .intent-stage {
+      margin-top: 26px;
+      max-width: 1380px;
+      height: 424px;
+      border: 1px solid var(--border);
+      background: color-mix(in oklch, var(--surface) 84%, var(--bg));
+      padding: 24px;
+      overflow: hidden;
+    }
+    .stream { height: 100%; }
+    .intent-layout { height: 100%; }
+    .intent-layout .intent-eyebrow {
+      font: 500 18px/1 var(--font-mono);
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .intent-layout .intent-title {
+      font-family: var(--font-display);
+      font-weight: 500;
+      letter-spacing: -0.018em;
+      color: var(--fg);
+      text-wrap: pretty;
+    }
+    .intent-layout .intent-copy {
+      font: 400 21px/1.35 var(--font-body);
+      color: var(--muted);
+      text-wrap: pretty;
+    }
+    .intent-layout .score { font-variant-numeric: tabular-nums; }
+    .intent-m {
+      display: grid;
+      grid-template-columns: 440px 1fr;
+      gap: 28px;
+      align-items: stretch;
+    }
+    .mission-card {
+      border: 1.5px solid var(--fg);
+      background: var(--surface);
+      padding: 28px 30px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      min-width: 0;
+    }
+    .mission-card .label {
+      font: 500 18px/1 var(--font-mono);
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .mission-card h3 {
+      font: 600 46px/1.04 var(--font-body);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-top: 18px;
+      max-width: 12ch;
+    }
+    .mission-card .intent-copy { margin-top: 20px; max-width: 26ch; }
+    .mission-card .score { font: 400 24px/1 var(--font-mono); color: var(--accent); align-self: end; }
+    .mission-ladder { display: grid; gap: 12px; align-content: stretch; }
+    .mission-step {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr) 110px;
+      gap: 16px;
+      align-items: center;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      padding: 13px 16px;
+      min-width: 0;
+    }
+    .mission-step .rank { font: 400 22px/1 var(--font-mono); color: var(--muted); }
+    .mission-step .title { font: 500 23px/1.18 var(--font-body); min-width: 0; }
+    .mission-step .fit {
+      display: grid;
+      grid-template-columns: 36px 1fr;
+      gap: 9px;
+      align-items: center;
+    }
+    .mission-step .score { font: 400 18px/1 var(--font-mono); color: var(--muted); text-align: right; }
+    .mission-step .fitbar { height: 4px; background: var(--border); overflow: hidden; }
+    .mission-step .fitfill { display: block; height: 100%; background: var(--fg); }
+    .intent-g {
+      display: grid;
+      grid-template-columns: 330px 1fr;
+      gap: 28px;
+      align-items: stretch;
+    }
+    .garden-note {
+      border-right: 1px solid var(--border);
+      padding: 6px 28px 6px 0;
+      display: grid;
+      align-content: center;
+      gap: 18px;
+    }
+    .garden-note .intent-title { font-size: 43px; line-height: 1.08; }
+    .garden-note .intent-copy { max-width: 25ch; }
+    .garden-beds {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 14px;
+      align-items: end;
+    }
+    .garden-bed {
+      min-height: 150px;
+      border: 1px solid var(--border);
+      border-radius: 90px 90px 18px 18px;
+      background:
+        linear-gradient(180deg, oklch(100% 0.002 95), oklch(96% 0.014 120));
+      padding: 22px 16px 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      gap: 10px;
+      position: relative;
+      overflow: hidden;
+    }
+    .garden-bed::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: 112px;
+      width: 2px;
+      height: var(--stem);
+      background: var(--fg);
+      opacity: .55;
+      transform: translateX(-50%);
+    }
+    .garden-bed::after {
+      content: "";
+      position: absolute;
+      left: calc(50% - 18px);
+      bottom: var(--leaf);
+      width: 38px;
+      height: 18px;
+      border: 1px solid var(--fg);
+      border-radius: 999px 0 999px 0;
+      transform: rotate(calc(-18deg + var(--tilt, 0deg)));
+      opacity: .45;
+    }
+    .garden-bed:nth-child(even)::after {
+      left: auto;
+      right: calc(50% - 20px);
+      border-radius: 0 999px 0 999px;
+      transform: rotate(calc(15deg + var(--tilt, 0deg)));
+    }
+    .garden-bed .label {
+      font: 500 15px/1 var(--font-mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      text-align: center;
+      position: relative;
+    }
+    .garden-bed .title { font: 500 19px/1.12 var(--font-display); letter-spacing: -0.01em; text-align: center; position: relative; }
+    .garden-bed .score { font: 400 15px/1 var(--font-mono); color: var(--muted); text-align: center; position: relative; }
+    .intent-s {
+      position: relative;
+      border: 1px solid var(--border);
+      background:
+        radial-gradient(circle at 20% 24%, oklch(91% 0.025 95), transparent 26%),
+        radial-gradient(circle at 76% 70%, oklch(91% 0.028 145), transparent 24%),
+        var(--surface);
+      overflow: hidden;
+    }
+    .sprout-map .intent-eyebrow {
+      position: absolute;
+      left: 26px;
+      top: 24px;
+      z-index: 2;
+    }
+    .sprout-map .intent-copy {
+      position: absolute;
+      left: 26px;
+      top: 58px;
+      max-width: 24ch;
+      z-index: 2;
+    }
+    .branch-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .branch-svg path {
+      fill: none;
+      stroke: var(--fg);
+      stroke-linecap: round;
+    }
+    .branch-svg path.limb {
+      fill: var(--fg);
+      stroke: none;
+    }
+    .sprout-node {
+      position: absolute;
+      left: var(--x);
+      top: var(--y);
+      width: var(--size);
+      min-height: var(--size);
+      transform: translate(-50%, -50%);
+      border: 1px solid color-mix(in oklch, var(--fg) 55%, var(--bg));
+      border-radius: var(--blob, 50%);
+      padding: 20px 22px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      background: color-mix(in oklch, var(--surface) 88%, var(--bg));
+    }
+    /* each find is a sprout: a short stem and one leaf grow from the crown,
+       in the same leaf grammar as the garden beds */
+    .sprout-node::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: -14px;
+      width: 1.5px;
+      height: 16px;
+      background: var(--fg);
+      opacity: .5;
+      transform: translateX(-50%) rotate(var(--lean, 0deg));
+      transform-origin: bottom center;
+    }
+    .sprout-node::after {
+      content: "";
+      position: absolute;
+      left: calc(50% - 1px);
+      top: -22px;
+      width: 24px;
+      height: 12px;
+      border: 1px solid var(--fg);
+      background: var(--surface);
+      border-radius: 999px 0 999px 0;
+      transform: rotate(calc(-26deg + var(--tilt, 0deg)));
+      transform-origin: 0 100%;
+      opacity: .55;
+    }
+    .sprout-node.is-top {
+      background: var(--fg);
+      border-color: var(--fg);
+      color: var(--bg);
+    }
+    .sprout-node.is-top::before { background: var(--accent); opacity: .9; }
+    .sprout-node.is-top::after {
+      width: 30px;
+      height: 15px;
+      top: -26px;
+      border-color: var(--accent);
+      background: color-mix(in oklch, var(--accent) 14%, var(--surface));
+      opacity: .95;
+    }
+    .sprout-node .title {
+      font: 500 21px/1.15 var(--font-display);
+      letter-spacing: -0.01em;
+      text-wrap: balance;
+    }
+    .sprout-node .score {
+      font: 500 15px/1 var(--font-mono);
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      margin-top: 9px;
+      opacity: .65;
+    }
+
+    /* intention-switch choreography — each layout argues its way in */
+    @media (prefers-reduced-motion: no-preference) {
+      .mission-card, .mission-step, .garden-note, .garden-bed {
+        animation: intent-in .45s cubic-bezier(.25, .9, .3, 1) both;
+        animation-delay: calc(var(--d, 0) * 70ms);
+      }
+      .mission-step .fitfill {
+        transform-origin: left center;
+        animation: fit-in .55s cubic-bezier(.25, .9, .3, 1) both;
+        animation-delay: calc(var(--d, 0) * 70ms + 200ms);
+      }
+      .sprout-node {
+        animation: sprout-node-in .5s cubic-bezier(.3, 1.25, .4, 1) both;
+        animation-delay: calc(var(--d, 0) * 80ms + 240ms);
+      }
+      .branch-svg path.limb {
+        animation: limb-in .55s ease both;
+        animation-delay: calc(var(--d, 0) * 100ms);
+      }
+    }
+    @keyframes intent-in { from { opacity: 0; transform: translateY(16px); } }
+    @keyframes fit-in { from { transform: scaleX(0); } }
+    @keyframes sprout-node-in { from { opacity: 0; transform: translate(-50%, -50%) scale(.78); } }
+    @keyframes limb-in { from { opacity: 0; } }
+
+    /* --- 08 closing ------------------------------------------------------- */
+    .plant-row { display: flex; gap: 18px; margin-top: 56px; align-items: center; }
+    input.soft-input {
+      font: 400 28px/1 var(--font-body);
+      color: var(--fg); background: var(--surface);
+      border: 1px solid var(--border); border-radius: 999px;
+      padding: 22px 36px; width: 620px; outline: none;
+      transition: border-color .15s;
+    }
+    input.soft-input:focus { border-color: var(--fg); }
+    input.soft-input::placeholder { color: var(--muted); }
+    .seedrow { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 44px; min-height: 72px; }
+    .seed {
+      font: 400 26px/1 var(--font-display); font-style: italic;
+      color: var(--fg); border: 1px solid var(--border); background: var(--surface);
+      border-radius: 999px; padding: 18px 32px;
+      animation: sprout .5s cubic-bezier(.3,1.3,.5,1) both;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .seed {
+        animation: sprout .5s cubic-bezier(.3,1.3,.5,1) both,
+                   sway 5.4s ease-in-out .7s infinite alternate;
+      }
+      .seed:nth-child(2n) { animation-duration: .5s, 6.6s; }
+      .seed:nth-child(3n) { animation-duration: .5s, 7.4s; }
+    }
+    @keyframes sprout {
+      from { transform: scale(.6); opacity: 0; }
+      to   { transform: scale(1);  opacity: 1; }
+    }
+    @keyframes sway {
+      from { transform: translateY(0) rotate(-0.5deg); }
+      to   { transform: translateY(-7px) rotate(0.7deg); }
+    }
+  </style>
+<style data-od-tweaks-bridge-style>
+[data-od-tweaks-hidden] .tw-panel {
+  transform: translateX(calc(100% + 32px)) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+.tw-restore { display: none !important; }
+</style><script data-od-tweaks-bridge>(function(){
+  // Synchronously hide BEFORE the artifact body parses so the panel never
+  // flashes on initial paint. The host removes the attribute via postMessage
+  // once it knows the desired state.
+  document.documentElement.setAttribute('data-od-tweaks-hidden', '');
+
+  var suppressEcho = false;
+  var observer = null;
+
+  function panelEl(){ return document.querySelector('.tw-panel'); }
+
+  function applyClassesToPanel(visible){
+    var panel = panelEl();
+    if (panel) panel.classList.toggle('tw-hidden', !visible);
+  }
+
+  function setPanelVisible(visible){
+    suppressEcho = true;
+    document.documentElement.toggleAttribute('data-od-tweaks-hidden', !visible);
+    applyClassesToPanel(visible);
+    // Clear flag after the MutationObserver has had a chance to fire for this
+    // change so we don't echo our own host-driven toggles back to the host.
+    Promise.resolve().then(function(){ suppressEcho = false; });
+  }
+
+  function postState(){
+    var panel = panelEl();
+    if (!panel) return;
+    try {
+      parent.postMessage({
+        type: 'od:tweaks-panel-state',
+        visible: !panel.classList.contains('tw-hidden'),
+      }, '*');
+    } catch (e) {}
+  }
+
+  function postAvailability(){
+    try {
+      parent.postMessage({
+        type: 'od:tweaks-available',
+        available: !!panelEl(),
+      }, '*');
+    } catch (e) {}
+  }
+
+  function attachObserver(){
+    var panel = panelEl();
+    if (!panel || observer) return;
+    observer = new MutationObserver(function(){
+      if (suppressEcho) return;
+      postState();
+    });
+    observer.observe(panel, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  function onReady(){
+    // Capture the panel authored visibility BEFORE we apply the host hidden
+    // attribute. The bridge sets data-od-tweaks-hidden synchronously in head
+    // (before the body parses), so on entry to onReady the attribute is
+    // always present even though the artifact may have authored the panel
+    // as default-visible. Reading the panel class first is the only place
+    // we can still observe the author intent. Then drive the attribute,
+    // classes, and posted state from that captured value so a default
+    // visible tw-panel reports visible:true and the toolbar toggle starts
+    // ON. Issue surfaced in PR #1643 review.
+    var panel = panelEl();
+    var initialVisible = !!panel && !panel.classList.contains('tw-hidden');
+    document.documentElement.toggleAttribute('data-od-tweaks-hidden', !initialVisible);
+    applyClassesToPanel(initialVisible);
+    attachObserver();
+    postAvailability();
+    // Post the captured initial visibility so the toolbar toggle reflects
+    // the default state on mount. Without this the toggle reads OFF while
+    // a default-visible tw-panel artifact clearly shows its panel and the
+    // user would have to click toggle-on then toggle-off to actually hide.
+    postState();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', onReady);
+  } else {
+    onReady();
+  }
+
+  window.addEventListener('message', function(ev){
+    if (!ev.data || ev.data.type !== 'od:tweaks-panel-visible') return;
+    setPanelVisible(!!ev.data.visible);
+  });
+})();</script></head>
+<body>
+  <div class="deck-shell" data-od-id="path-0">
+    <div class="deck-stage" id="deck-stage" data-od-id="path-0-0">
+
+      <!-- ============ 01 · COVER ============ -->
+      <section class="slide active hf s-ink" data-folio="01" data-screen-label="01 Cover" data-od-id="slide-cover">
+        <div class="hf-body" data-od-id="path-0-0-0-0">
+          <div class="cover-mast">
+            <div class="kicker" data-od-id="cover-kicker">the feed answers to you now</div>
+            <div class="ctl-label">hyperframe 01 · pick a word</div>
+          </div>
+          <h1 class="cover-word" data-od-id="cover-title">f<span class="worddot">.</span>ads</h1>
+          <p class="cover-sub" data-od-id="cover-subheader">show me what's <span class="swap" id="swap-word" data-od-id="path-0-0-0-0-2-0">cool</span>.</p>
+          <div class="seg" id="word-seg" role="group" aria-label="Subheader word" data-od-id="cover-word-picker">
+            <button type="button" aria-pressed="true" data-od-id="path-0-0-0-0-3-0">cool</button>
+            <button type="button" aria-pressed="false" data-od-id="path-0-0-0-0-3-1">up</button>
+            <button type="button" aria-pressed="false" data-od-id="path-0-0-0-0-3-2">banging</button>
+            <button type="button" aria-pressed="false" data-od-id="path-0-0-0-0-3-3">blooming</button>
+            <button type="button" aria-pressed="false" data-od-id="path-0-0-0-0-3-4">true</button>
+          </div>
+          <div class="ex-row" id="ex-row" data-od-id="cover-examples"></div>
+        </div>
+        <div class="hf-foot rule-top" data-od-id="path-0-0-0-1">
+          <span>become who you choose — not what the feed optimizes for</span>
+          <span>01 — 08</span>
+        </div>
+      </section>
+
+      <!-- ============ 02 · PREMISE (switch) ============ -->
+      <section class="slide hf" data-folio="02" data-screen-label="02 Own the interface" data-od-id="slide-premise">
+        <div class="duo hf-body" data-od-id="path-0-0-1-0">
+          <div>
+            <div class="kicker">the premise</div>
+            <h2 class="hf-h" data-od-id="premise-heading">Take back the&nbsp;interface.</h2>
+            <p class="lead">Their feed is built to hold you. Yours is built to serve you. Same three stories — flip the switch and <em>you</em> decide how they sit.</p>
+            <div class="odswitch" id="frame-switch" role="switch" aria-checked="false" tabindex="0" data-od-id="premise-switch">
+              <span class="sw-label" id="sw-theirs" data-od-id="path-0-0-1-0-0-3-0">their feed</span>
+              <span class="track"><span class="knob"></span></span>
+              <span class="sw-label" id="sw-yours" style="color: var(--muted)" data-od-id="path-0-0-1-0-0-3-2">your frame</span>
+            </div>
+          </div>
+          <div class="feedstack mode-theirs" id="feedstack" data-od-id="premise-feedstack">
+            <article class="fcard" data-od-id="feed-card-solar">
+              <div class="fc-meta" data-od-id="path-0-0-1-0-1-0-0">orbit weekly</div>
+              <div class="fc-title" data-od-id="path-0-0-1-0-1-0-1">Community solar quietly became a neighborhood movement</div>
+              <div class="fc-bait" data-od-id="path-0-0-1-0-1-0-2">you won't believe #3 →</div>
+            </article>
+            <article class="fcard" data-od-id="feed-card-recommender">
+              <div class="fc-meta" data-od-id="path-0-0-1-0-1-1-0">the long read</div>
+              <div class="fc-title" data-od-id="path-0-0-1-0-1-1-1">Who owns the recommendation layer?</div>
+              <div class="fc-bait" data-od-id="path-0-0-1-0-1-1-2">everyone is talking about this</div>
+            </article>
+            <article class="fcard" data-od-id="feed-card-fermentation">
+              <div class="fc-meta" data-od-id="path-0-0-1-0-1-2-0">field notes</div>
+              <div class="fc-title" data-od-id="path-0-0-1-0-1-2-1">A fermentation club's open logbook, week nine</div>
+              <div class="fc-bait" data-od-id="path-0-0-1-0-1-2-2">trending now · don't miss out</div>
+            </article>
+          </div>
+        </div>
+        <div class="hf-foot rule-top" data-od-id="path-0-0-1-1">
+          <span>hyperframe 02 · a switch</span>
+          <span>same information, your typography</span>
+        </div>
+      </section>
+
+      <!-- ============ 03 · THE FORMAT (tabs) ============ -->
+      <section class="slide hf" data-folio="03" data-screen-label="03 Content as structure" data-od-id="slide-format">
+        <div class="hf-body" data-od-id="path-0-0-2-0">
+          <div class="kicker">the abstraction</div>
+          <h2 class="hf-h" data-od-id="format-heading">They send structure. You decide the screen.</h2>
+          <div class="tabs" role="tablist" id="fmt-tabs" data-od-id="format-tabs">
+            <button type="button" role="tab" aria-selected="true" data-pane="p-schema" data-od-id="path-0-0-2-0-2-0">structure</button>
+            <button type="button" role="tab" aria-selected="false" data-pane="p-card" data-od-id="path-0-0-2-0-2-1">as a card</button>
+            <button type="button" role="tab" aria-selected="false" data-pane="p-reader" data-od-id="path-0-0-2-0-2-2">as a reader</button>
+          </div>
+          <div class="pane-wrap">
+            <div class="pane on" id="p-schema" data-od-id="path-0-0-2-0-3-0">
+<div class="schema" data-od-id="path-0-0-2-0-3-0-0"><span class="k">item</span>
+  <span class="k">source:</span>  orbit-weekly
+  <span class="k">kind:</span>    article
+  <span class="k">title:</span>   Community solar quietly became a neighborhood movement
+  <span class="k">tags:</span>    [energy, cities, diy]
+  <span class="k">body:</span>    markdown, but stricter — blocks with roles
+  <span class="k">motion:</span>  add / remove / css-step, one element at a time</div>
+            </div>
+            <div class="pane" id="p-card" data-od-id="path-0-0-2-0-3-1">
+              <div class="rcard" data-od-id="format-card-render">
+                <div class="fc-meta">orbit weekly · energy · cities</div>
+                <h3 data-od-id="path-0-0-2-0-3-1-0-1">Community solar quietly became a neighborhood movement</h3>
+                <p>Rendered by your card template: your radius, your spacing, your type. The service never saw this layout.</p>
+              </div>
+            </div>
+            <div class="pane" id="p-reader" data-od-id="path-0-0-2-0-3-2">
+              <div class="reader" data-od-id="format-reader-render">
+                <h3 data-od-id="path-0-0-2-0-3-2-0-0">Community solar quietly became a neighborhood movement</h3>
+                <div class="byline">orbit weekly · rendered by your reader frame</div>
+                <p>The same structured item, poured into a long-form frame. One source of truth, any number of faces — because the face was never theirs to choose.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="hf-foot rule-top" data-od-id="path-0-0-2-1">
+          <span>hyperframe 03 · tabs as renderers</span>
+          <span>one item, three faces</span>
+        </div>
+      </section>
+
+      <!-- ============ 04 · MORPH I (button + slider) ============ -->
+      <section class="slide hf" data-folio="04" data-screen-label="04 Style clouds, morphing" data-od-id="slide-morph-1">
+        <div class="hf-body" data-od-id="path-0-0-3-0">
+          <div class="kicker">style clouds · live</div>
+          <h2 class="hf-h" style="font-size: 58px; max-width: 34ch;" data-od-id="morph1-heading">A frame is a cloud of styles — and the cloud is yours.</h2>
+          <div class="cloud-grid" id="cloud1" data-od-id="morph1-grid">
+            <div class="mc mc-terminal" data-od-id="morph-tile-terminal">
+              <div class="t-line">fetch orbit-weekly/balcony-solar</div>
+              <div class="t-line">frame: mono-01 · 3 blocks</div>
+              <div class="t-line">render ok · 41ms</div>
+              <span class="t-cursor"></span>
+              <span class="frame-name">mono-01</span>
+            </div>
+            <div class="mc mc-editorial" data-od-id="morph-tile-editorial">
+              <div class="e-kicker">essay</div>
+              <div class="e-head">The slow web is not the boring web</div>
+              <div class="e-rule"></div>
+              <span class="frame-name">almanac</span>
+            </div>
+            <div class="mc mc-data" data-od-id="morph-tile-data">
+              <div class="d-title">tidal energy · live</div>
+              <div class="d-row"><span>severn est.</span><span class="d-num">241</span><span class="d-bar"><span class="d-fill" style="width:62%"></span></span></div>
+              <div class="d-row"><span>fundy bay</span><span class="d-num">508</span><span class="d-bar"><span class="d-fill" style="width:84%"></span></span></div>
+              <div class="d-row"><span>pentland f.</span><span class="d-num">133</span><span class="d-bar"><span class="d-fill" style="width:38%"></span></span></div>
+              <span class="frame-name">ticker</span>
+            </div>
+            <div class="mc mc-poster" data-od-id="morph-tile-poster">
+              <div class="p-head">Rewild the block</div>
+              <div class="p-tag">thread · cities</div>
+              <span class="frame-name">poster</span>
+            </div>
+            <div class="mc mc-soft" data-od-id="morph-tile-soft">
+              <div class="b">week nine: the kraut finally sings</div>
+              <div class="b me">saving to your craft stream</div>
+              <span class="frame-name">bubble</span>
+            </div>
+            <div class="mc mc-zine" data-od-id="morph-tile-zine">
+              <span class="z-stamp">copy freely</span>
+              <div class="z-title">field recordings from the night bus</div>
+              <span class="frame-name">zine</span>
+            </div>
+          </div>
+          <div class="ctl-row" style="margin-top: 44px;">
+            <button type="button" class="soft primary" id="morph-btn" data-od-id="morph1-button">Morph the cloud</button>
+            <span class="ctl-label">drift</span>
+            <input type="range" class="soft-range" id="morph-int" min="4" max="24" value="10" aria-label="Morph intensity" data-od-id="morph1-intensity">
+            <span class="oplog" id="oplog1" style="margin-top: 0; flex: 1;" data-od-id="path-0-0-3-0-3-3">entropy from your machine — not a seed, not a script.</span>
+          </div>
+        </div>
+        <div class="hf-foot rule-top" data-od-id="path-0-0-3-1">
+          <span>hyperframe 04 · button + slider</span>
+          <span>crypto.getRandomValues, applied one css step at a time</span>
+        </div>
+      </section>
+
+      <!-- ============ 05 · TRANSITION GRAMMAR (stepper) ============ -->
+      <section class="slide hf" data-folio="05" data-screen-label="05 Motion is data" data-od-id="slide-grammar">
+        <div class="stage-split hf-body" data-od-id="path-0-0-4-0">
+          <div>
+            <div class="kicker">the transition grammar</div>
+            <h2 class="hf-h" data-od-id="grammar-heading">Motion is data too.</h2>
+            <p class="lead">A frame change is a sentence: add an element, remove an element, sandwiched by CSS steps to one element at a time. Watch a card get taken back, op by op.</p>
+            <div class="step-ctl">
+              <button type="button" class="soft" id="op-prev" data-od-id="grammar-prev">‹ undo op</button>
+              <button type="button" class="soft primary" id="op-next" data-od-id="grammar-next">apply op ›</button>
+              <span class="step-ind" id="op-ind" data-od-id="path-0-0-4-0-0-3-2">op 0 / 5</span>
+            </div>
+          </div>
+          <div>
+            <article class="opcard" id="opcard" data-od-id="grammar-demo-card">
+              <span class="oc-badge">trending · 4,102 watching</span>
+              <div class="oc-title" data-od-id="path-0-0-4-0-1-0-1">Who owns the recommendation layer?</div>
+              <div class="oc-meta" data-od-id="path-0-0-4-0-1-0-2">the long read · 14 min · saved for saturday</div>
+            </article>
+            <div class="opcode" id="opcode" style="margin-top: 46px;" data-od-id="grammar-op-list">
+              <div>frame.add( meta: reading-time + shelf )</div>
+              <div>css( title ).font-family → 'Iowan Old Style'</div>
+              <div>frame.remove( engagement-badge )</div>
+              <div>css( card ).padding → 52px 58px</div>
+              <div>css( card ).border-radius → 18px</div>
+            </div>
+          </div>
+        </div>
+        <div class="hf-foot rule-top" data-od-id="path-0-0-4-1">
+          <span>hyperframe 05 · a stepper</span>
+          <span>five ops, from their card to yours</span>
+        </div>
+      </section>
+
+      <!-- ============ 06 · YOUR ALGORITHM (chips) ============ -->
+      <section class="slide hf" data-folio="06" data-screen-label="06 Your algorithm" data-od-id="slide-algorithm">
+        <div class="hf-body algorithm-body" data-od-id="path-0-0-5-0">
+          <div class="kicker">the algorithm</div>
+          <h2 class="hf-h" data-od-id="algorithm-heading">Point the river at who you're becoming.</h2>
+          <p class="lead">You set what it optimizes <em>for</em>. Each goal re-argues the same five items — none of them chosen to sell you anything.</p>
+          <div class="chips" id="goal-chips" role="group" aria-label="Stream goal" data-od-id="algorithm-goal-chips">
+            <button type="button" aria-pressed="true" data-goal="m" data-od-id="path-0-0-5-0-3-0">motivate my goals</button>
+            <button type="button" aria-pressed="false" data-goal="g" data-od-id="path-0-0-5-0-3-1">garden my interests</button>
+            <button type="button" aria-pressed="false" data-goal="s" data-od-id="path-0-0-5-0-3-2">water new sprouts</button>
+          </div>
+          <div class="intent-stage" data-od-id="algorithm-intention-stage">
+            <div class="stream" id="stream" data-od-id="algorithm-stream"></div>
+          </div>
+        </div>
+        <div class="hf-foot rule-top" data-od-id="path-0-0-5-1">
+          <span>hyperframe 06 · goal chips + entropy</span>
+          <span>same five items · a different interface for each intention</span>
+        </div>
+      </section>
+
+      <!-- ============ 07 · MORPH II (dual sliders + reroll) ============ -->
+      <section class="slide hf" data-folio="07" data-screen-label="07 The interest cloud" data-od-id="slide-morph-2">
+        <div class="hf-body" data-od-id="path-0-0-6-0">
+          <div class="kicker">style clouds · your garden</div>
+          <h2 class="hf-h" style="font-size: 58px;" data-od-id="morph2-heading">Your interests, weighted by your own hand.</h2>
+          <div class="typecloud" id="typecloud" data-od-id="morph2-cloud"></div>
+          <div class="ctl-row" style="margin-top: 30px;">
+            <span class="ctl-label">temperature</span>
+            <input type="range" class="soft-range" id="cl-temp" min="0" max="100" value="35" aria-label="Cloud temperature" data-od-id="morph2-temperature">
+            <span class="ctl-label">spread</span>
+            <input type="range" class="soft-range" id="cl-spread" min="0" max="100" value="50" aria-label="Cloud spread" data-od-id="morph2-spread">
+            <button type="button" class="soft" id="cl-noise" data-od-id="morph2-reroll">draw from noise</button>
+          </div>
+        </div>
+        <div class="hf-foot rule-top" data-od-id="path-0-0-6-1">
+          <span>hyperframe 07 · two sliders + a reroll</span>
+          <span>real entropy decides what grows louder</span>
+        </div>
+      </section>
+
+      <!-- ============ 08 · CLOSING (input) ============ -->
+      <section class="slide hf s-ink" data-folio="08" data-screen-label="08 Plant an interest" data-od-id="slide-closing">
+        <div class="hf-body" data-od-id="path-0-0-7-0">
+          <div class="kicker">begin</div>
+          <h2 class="hf-h" data-od-id="closing-heading">Your feed is a garden, not a slot machine.</h2>
+          <p class="lead">Plant the first thing you actually want flowing your way. What you water is who you become.</p>
+          <div class="plant-row">
+            <input type="text" class="soft-input" id="seed-input" placeholder="an interest worth watering…" maxlength="42" data-od-id="closing-seed-input">
+            <button type="button" class="soft primary" id="seed-btn" data-od-id="closing-plant-button">plant it</button>
+          </div>
+          <div class="seedrow" id="seedrow" data-od-id="closing-seed-row"></div>
+        </div>
+        <div class="hf-foot rule-top" data-od-id="path-0-0-7-1">
+          <span>f.ads — show me what's cool</span>
+          <span>hyperframe 08 · a text field</span>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- Framework chrome — DO NOT EDIT below this line. -->
+  <nav class="deck-counter" role="navigation" aria-label="Deck navigation" data-od-id="path-1">
+    <button type="button" id="deck-prev" aria-label="Previous slide" data-od-id="path-1-0">‹</button>
+    <span class="deck-count"><span id="deck-cur" data-od-id="path-1-1-0">01</span> <span class="total">/ <span id="deck-total" data-od-id="path-1-1-1-0">01</span></span></span>
+    <button type="button" id="deck-next" aria-label="Next slide" data-od-id="path-1-2">›</button>
+  </nav>
+  <div class="deck-hint" data-od-id="path-2">← / → · space</div>
+
+  <script>
+    (function () {
+      var stage = document.getElementById('deck-stage');
+      var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+      var prev = document.getElementById('deck-prev');
+      var next = document.getElementById('deck-next');
+      var cur = document.getElementById('deck-cur');
+      var total = document.getElementById('deck-total');
+      var STORE = 'deck:idx:' + (location.pathname || '/');
+      var idx = 0;
+
+      // ---- scale-to-fit ---------------------------------------------------
+      // The stage is 1920×1080 and sits at .deck-shell's (0, 0) in normal
+      // block flow — the shell is intentionally NOT a grid/flex container,
+      // so the stage's natural top-left is (0, 0). We scale via transform
+      // with transform-origin:top-left, then translate by the remainder to
+      // center the scaled box in the viewport. This survives nested
+      // transforms (e.g. when the OD viewer wraps the iframe in its own
+      // scale wrapper at zoom != 100%).
+      function fit() {
+        var sw = window.innerWidth;
+        var sh = window.innerHeight;
+        var pad = 32;
+        var s = Math.min((sw - pad) / 1920, (sh - pad) / 1080);
+        if (!isFinite(s) || s <= 0) s = 1;
+        var tx = (sw - 1920 * s) / 2;
+        var ty = (sh - 1080 * s) / 2;
+        stage.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + s + ')';
+      }
+
+      // ---- navigation -----------------------------------------------------
+      function pad2(n) { return (n < 10 ? '0' : '') + n; }
+      function paint() {
+        slides.forEach(function (el, i) { el.classList.toggle('active', i === idx); });
+        if (cur) cur.textContent = pad2(idx + 1);
+        if (total) total.textContent = pad2(slides.length);
+        if (prev) prev.toggleAttribute('disabled', idx <= 0);
+        if (next) next.toggleAttribute('disabled', idx >= slides.length - 1);
+      }
+      function go(i) {
+        idx = Math.max(0, Math.min(slides.length - 1, i));
+        paint();
+        try { localStorage.setItem(STORE, String(idx)); } catch (_) {}
+      }
+      function onKey(e) {
+        if (e.__odDeckKeyHandled) return;
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.__odDeckKeyHandled = true; e.preventDefault(); go(idx + 1); }
+        else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.__odDeckKeyHandled = true; e.preventDefault(); go(idx - 1); }
+        else if (e.key === 'Home') { e.__odDeckKeyHandled = true; e.preventDefault(); go(0); }
+        else if (e.key === 'End') { e.__odDeckKeyHandled = true; e.preventDefault(); go(slides.length - 1); }
+      }
+      // Capture phase + listen on both targets — inside the OD iframe,
+      // focus may be on window OR document; a single non-capture listener
+      // silently misses presses.
+      window.addEventListener('keydown', onKey, true);
+      document.addEventListener('keydown', onKey, true);
+      if (prev) prev.addEventListener('click', function () { go(idx - 1); });
+      if (next) next.addEventListener('click', function () { go(idx + 1); });
+
+      // Auto-focus body so arrow keys work without an initial click.
+      document.body.setAttribute('tabindex', '-1');
+      document.body.style.outline = 'none';
+      function focusDeck() { try { window.focus(); document.body.focus({ preventScroll: true }); } catch (_) {} }
+      document.addEventListener('mousedown', focusDeck);
+      window.addEventListener('load', focusDeck);
+
+      // Restore last position.
+      try {
+        var saved = parseInt(localStorage.getItem(STORE) || '0', 10);
+        if (!isNaN(saved) && saved >= 0 && saved < slides.length) idx = saved;
+      } catch (_) {}
+
+      window.addEventListener('resize', fit);
+      fit();
+      paint();
+      focusDeck();
+    })();
+  </script>
+
+  <script>
+    /* ================= f.ads hyperframe controls (per-deck JS) ============
+       Real randomness everywhere: crypto.getRandomValues, never Math.random.
+       Morphs obey the f.ads transition grammar — element add/remove
+       sandwiched by CSS changes applied to ONE element at a time.
+    ======================================================================= */
+    (function () {
+      'use strict';
+
+      // -- true entropy in [0,1) ------------------------------------------
+      function rnd() {
+        var u = new Uint32Array(1);
+        crypto.getRandomValues(u);
+        return u[0] / 4294967296;
+      }
+      function pick(arr) { return arr[Math.floor(rnd() * arr.length)]; }
+      function between(a, b) { return a + rnd() * (b - a); }
+
+      // ---- 01 · cover word picker ---------------------------------------
+      // Each word is a different thing to be looking for; picking one shows
+      // three example finds the stream would fetch for it.
+      var EXAMPLES = {
+        cool: [
+          { k: 'design find', t: 'a zine printed on seed paper' },
+          { k: 'audio', t: 'field recordings of night trains' },
+          { k: 'tool', t: 'a browser that renders only text' }
+        ],
+        up: [
+          { k: 'local', t: 'bike-lane vote at city hall tonight' },
+          { k: 'explained', t: 'the commons-law ruling, in plain words' },
+          { k: 'your block', t: 'a repair café opens two streets over' }
+        ],
+        banging: [
+          { k: 'music', t: 'the set everyone replayed twice' },
+          { k: 'play', t: 'a speedrun of a 1994 puzzle game' },
+          { k: 'food', t: 'the chili-oil recipe everyone remixes' }
+        ],
+        blooming: [
+          { k: 'your garden', t: 'mycology, three weeks tended' },
+          { k: 'sprouting', t: 'balcony solar — two neighbors joined' },
+          { k: 'new seed', t: 'letterpress, freshly planted' }
+        ],
+        true: [
+          { k: 'sourced', t: 'the recommendation-layer claim, cited' },
+          { k: 'primary data', t: 'heat-pump numbers, with the math shown' },
+          { k: 'correction', t: 'what the study actually measured' }
+        ]
+      };
+      var seg = document.getElementById('word-seg');
+      var swapWord = document.getElementById('swap-word');
+      var exRow = document.getElementById('ex-row');
+      function renderExamples(word) {
+        if (!exRow) return;
+        var list = EXAMPLES[word] || EXAMPLES.cool;
+        exRow.innerHTML = list.map(function (ex, i) {
+          return '<article class="ex-card" style="--d:' + i + '" data-od-id="cover-example-' + (i + 1) + '">' +
+            '<div class="ex-kind">' + ex.k + '</div>' +
+            '<div class="ex-title">' + ex.t + '</div>' +
+          '</article>';
+        }).join('');
+      }
+      if (seg) seg.addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        seg.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', 'false'); });
+        b.setAttribute('aria-pressed', 'true');
+        swapWord.textContent = b.textContent;
+        renderExamples(b.textContent);
+      });
+      renderExamples('cool');
+
+      // ---- 02 · their feed / your frame switch ---------------------------
+      var sw = document.getElementById('frame-switch');
+      var stack = document.getElementById('feedstack');
+      var swTheirs = document.getElementById('sw-theirs');
+      var swYours = document.getElementById('sw-yours');
+      function setFrame(yours) {
+        sw.setAttribute('aria-checked', String(yours));
+        stack.classList.toggle('mode-yours', yours);
+        stack.classList.toggle('mode-theirs', !yours);
+        swTheirs.style.color = yours ? 'var(--muted)' : 'var(--fg)';
+        swYours.style.color = yours ? 'var(--fg)' : 'var(--muted)';
+      }
+      if (sw) {
+        sw.addEventListener('click', function () { setFrame(sw.getAttribute('aria-checked') !== 'true'); });
+        sw.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.stopPropagation(); setFrame(sw.getAttribute('aria-checked') !== 'true'); }
+        });
+      }
+
+      // ---- 03 · renderer tabs --------------------------------------------
+      var tabs = document.getElementById('fmt-tabs');
+      if (tabs) tabs.addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        tabs.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-selected', 'false'); });
+        b.setAttribute('aria-selected', 'true');
+        document.querySelectorAll('.pane').forEach(function (p) { p.classList.remove('on'); });
+        document.getElementById(b.dataset.pane).classList.add('on');
+      });
+
+      // ---- 04 · style-cloud morph bench ----------------------------------
+      // Six frame concepts, each with its own morph vocabulary. Universal ops
+      // (tilt, theme flip) apply anywhere; concept ops keep every tile moving
+      // inside its own idea. All choices drawn from hardware entropy.
+      var mcs = Array.prototype.slice.call(document.querySelectorAll('#cloud1 .mc'));
+      var oplog1 = document.getElementById('oplog1');
+      var morphTimer = null;
+
+      var T_LINES = ['pull commons-law digest', 'diff: +1 block, −1 block', 'fetch night-sky almanac', 'css step: --leading 1.7', 'subscribed: repair-cafes', 'render ok · 38ms'];
+      var P_HEADS = ['Rewild the block', 'Streets to meadow', 'Wild by Monday', 'Let the verge grow'];
+      var E_HEADS = ['The slow web is not the boring web', 'Notes should outlive their server', 'A quieter kind of feed'];
+      var Z_STAMPS = ['copy freely', 'hand made', 'zine trade', 'issue nine'];
+      var B_REPLIES = ['saving to your craft stream', 'watering: fermentation', 'brb, buying cabbage'];
+
+      function frameName(t) { return t.querySelector('.frame-name').textContent; }
+
+      // Cloud-level arrangement: the grid is 6 columns wide; every preset's
+      // spans sum to 6 per row, so the cloud always resolves to exactly two
+      // 216px rows — frames can widen, trade places, or leave and rejoin,
+      // but the slide never grows.
+      mcs.forEach(function (t, i) { t.style.order = i; t.style.gridColumn = 'span 2'; });
+      var PRESETS = [
+        [2, 2, 2, 2, 2, 2],
+        [3, 3, 2, 2, 2],
+        [2, 2, 2, 3, 3],
+        [2, 4, 2, 2, 2],
+        [3, 3, 3, 3],
+        [4, 2, 3, 3],
+        [2, 4, 4, 2]
+      ];
+      function arrangeCloud() {
+        var spans = pick(PRESETS);
+        var idxs = mcs.map(function (_, i) { return i; });
+        for (var i = idxs.length - 1; i > 0; i--) {
+          var j = Math.floor(rnd() * (i + 1));
+          var tmp = idxs[i]; idxs[i] = idxs[j]; idxs[j] = tmp;
+        }
+        mcs.forEach(function (t) { t.classList.add('mc-off'); });
+        spans.forEach(function (span, slot) {
+          var t = mcs[idxs[slot]];
+          t.classList.remove('mc-off');
+          t.style.order = slot;
+          t.style.gridColumn = 'span ' + span;
+        });
+        return 'frame.arrange( cloud ) → ' + spans.length + ' frames · spans ' + spans.join('·');
+      }
+      function swapFrames() {
+        var vis = mcs.filter(function (t) { return !t.classList.contains('mc-off'); });
+        if (vis.length < 2) return arrangeCloud();
+        var a = vis[Math.floor(rnd() * vis.length)], b = a;
+        while (b === a) b = vis[Math.floor(rnd() * vis.length)];
+        var ao = a.style.order, ac = a.style.gridColumn;
+        a.style.order = b.style.order; a.style.gridColumn = b.style.gridColumn;
+        b.style.order = ao; b.style.gridColumn = ac;
+        return 'frame.move( ' + frameName(a) + ' ↔ ' + frameName(b) + ' )';
+      }
+
+      var OPS4 = [
+        { concept: false, ok: function () { return true; }, run: function (t) {
+            var d = between(-1.3, 1.3).toFixed(2);
+            t.style.transform = 'rotate(' + d + 'deg)';
+            return 'css( ' + frameName(t) + ' ).rotate → ' + d + 'deg';
+        } },
+        { concept: false, ok: function () { return true; }, run: function (t) {
+            var w = pick(['0px', '1px', '1.5px', '2px', '3px']);
+            var ink = rnd() > 0.5;
+            t.style.borderWidth = w;
+            t.style.borderColor = ink ? 'var(--fg)' : 'var(--border)';
+            return 'css( ' + frameName(t) + ' ).border → ' + w + (ink ? ' ink' : ' hairline');
+        } },
+        { concept: false, ok: function (t) { return !t.classList.contains('mc-terminal'); }, run: function (t) {
+            t.classList.toggle('flip');
+            return 'css( ' + frameName(t) + ' ).theme → ' + (t.classList.contains('flip') ? 'inverted' : 'paper');
+        } },
+        { concept: true, ok: function (t) { return t.classList.contains('mc-terminal'); }, run: function (t) {
+            var lines = t.querySelectorAll('.t-line');
+            var line = document.createElement('div'); line.className = 't-line';
+            line.textContent = pick(T_LINES);
+            t.insertBefore(line, t.querySelector('.t-cursor'));
+            if (lines.length >= 3) lines[0].remove();
+            return 'frame.add( mono-01 · line ) · frame.remove( oldest )';
+        } },
+        { concept: true, ok: function (t) { return t.classList.contains('mc-data'); }, run: function (t) {
+            Array.prototype.forEach.call(t.querySelectorAll('.d-row'), function (r) {
+              r.querySelector('.d-num').textContent = Math.round(between(60, 620));
+              r.querySelector('.d-fill').style.width = Math.round(between(18, 96)) + '%';
+            });
+            return 'css( ticker ).series → redrawn from noise';
+        } },
+        { concept: true, ok: function (t) { return t.classList.contains('mc-poster'); }, run: function (t) {
+            var h = t.querySelector('.p-head');
+            h.textContent = pick(P_HEADS);
+            h.style.letterSpacing = between(0.06, 0.11).toFixed(3) + 'em';
+            return 'css( poster ).headline → "' + h.textContent + '"';
+        } },
+        { concept: true, ok: function (t) { return t.classList.contains('mc-editorial'); }, run: function (t) {
+            t.querySelector('.e-head').textContent = pick(E_HEADS);
+            return 'css( almanac ).essay → re-set, first letter re-dropped';
+        } },
+        { concept: true, ok: function (t) { return t.classList.contains('mc-soft'); }, run: function (t) {
+            var me = t.querySelector('.b.me');
+            if (me && rnd() > 0.65) { me.remove(); return 'frame.remove( bubble · reply )'; }
+            if (!me) {
+              var b = document.createElement('div'); b.className = 'b me'; b.textContent = pick(B_REPLIES);
+              t.insertBefore(b, t.querySelector('.frame-name'));
+              return 'frame.add( bubble · reply )';
+            }
+            me.textContent = pick(B_REPLIES);
+            return 'css( bubble ).reply → "' + me.textContent + '"';
+        } },
+        { concept: true, ok: function (t) { return t.classList.contains('mc-zine'); }, run: function (t) {
+            var s = t.querySelector('.z-stamp');
+            s.textContent = pick(Z_STAMPS);
+            s.style.transform = 'rotate(' + between(-4, 3).toFixed(1) + 'deg)';
+            return 'css( zine ).stamp → "' + s.textContent + '"';
+        } }
+      ];
+      // Focus cycle: one card at a time gets the spotlight — 2–7 random ops
+      // land on it, then the spotlight moves to the next visible card.
+      // Cloud-level re-arrangements only happen between cards.
+      var cloudEl1 = document.getElementById('cloud1');
+      var focusTile = null, opsLeft = 0, lastIdx = -1;
+      function clearFocus() {
+        if (focusTile) focusTile.classList.remove('mc-focus');
+        cloudEl1.classList.remove('focusing');
+        focusTile = null;
+      }
+      function nextCard() {
+        var start = (lastIdx + 1) % mcs.length;
+        for (var k = 0; k < mcs.length; k++) {
+          var i = (start + k) % mcs.length;
+          if (!mcs[i].classList.contains('mc-off')) {
+            focusTile = mcs[i];
+            lastIdx = i;
+            focusTile.classList.add('mc-focus');
+            cloudEl1.classList.add('focusing');
+            opsLeft = 2 + Math.floor(rnd() * 6); // 2–7 ops, drawn from entropy
+            return;
+          }
+        }
+      }
+      function applyOpTo(t) {
+        var valid = OPS4.filter(function (o) { return o.ok(t); });
+        var conceptOps = valid.filter(function (o) { return o.concept; });
+        var op = (conceptOps.length && rnd() < 0.62) ? pick(conceptOps) : pick(valid);
+        return op.run(t);
+      }
+      function driftTick(label) {
+        if (!focusTile) {
+          // between cards: sometimes the cloud itself re-arranges
+          if (rnd() < 0.28) {
+            oplog1.innerHTML = label + ' · <b>' + (rnd() < 0.5 ? arrangeCloud() : swapFrames()) + '</b>';
+            return;
+          }
+          nextCard();
+          if (focusTile) oplog1.innerHTML = label + ' · <b>focus( ' + frameName(focusTile) + ' ) · ' + opsLeft + ' ops queued</b>';
+          return;
+        }
+        if (focusTile.classList.contains('mc-off')) { clearFocus(); return; }
+        oplog1.innerHTML = label + ' · <b>' + applyOpTo(focusTile) + '</b>';
+        opsLeft--;
+        if (opsLeft <= 0) clearFocus();
+      }
+      var morphBtn = document.getElementById('morph-btn');
+      if (morphBtn) morphBtn.addEventListener('click', function () {
+        if (morphTimer) { clearInterval(morphTimer); morphTimer = null; }
+        var n = parseInt(document.getElementById('morph-int').value, 10);
+        var done = 0;
+        morphTimer = setInterval(function () {
+          done++;
+          driftTick('op ' + done + '/' + n);
+          if (done >= n) { clearInterval(morphTimer); morphTimer = null; }
+        }, 220);
+      });
+
+      // ---- 05 · transition-grammar stepper --------------------------------
+      var opcard = document.getElementById('opcard');
+      var opIdx = 0;
+      var OPS = [
+        { on: function () { opcard.classList.add('metaon'); },   off: function () { opcard.classList.remove('metaon'); } },
+        { on: function () { opcard.classList.add('serif'); },    off: function () { opcard.classList.remove('serif'); } },
+        { on: function () { opcard.classList.add('badgeoff'); }, off: function () { opcard.classList.remove('badgeoff'); } },
+        { on: function () { opcard.classList.add('relaxed'); },  off: function () { opcard.classList.remove('relaxed'); } },
+        { on: function () { opcard.classList.add('rounded'); },  off: function () { opcard.classList.remove('rounded'); } }
+      ];
+      var opLines = Array.prototype.slice.call(document.querySelectorAll('#opcode div'));
+      var opInd = document.getElementById('op-ind');
+      function paintOps() {
+        opLines.forEach(function (l, i) {
+          l.classList.toggle('done', i < opIdx - 1);
+          l.classList.toggle('now', i === opIdx - 1);
+        });
+        opInd.textContent = 'op ' + opIdx + ' / ' + OPS.length;
+      }
+      var opNext = document.getElementById('op-next');
+      var opPrev = document.getElementById('op-prev');
+      if (opNext) opNext.addEventListener('click', function () {
+        if (opIdx >= OPS.length) return;
+        OPS[opIdx].on(); opIdx++; paintOps();
+      });
+      if (opPrev) opPrev.addEventListener('click', function () {
+        if (opIdx <= 0) return;
+        opIdx--; OPS[opIdx].off(); paintOps();
+      });
+      paintOps();
+
+      // ---- 06 · goal-weighted stream ---------------------------------------
+      var ITEMS = [
+        { t: "Your running club's weekly recap", short: 'running club recap',
+          why: 'You said: run the spring half. This is the crew holding you to it.',
+          w: { m: 0.95, g: 0.5, s: 0.1 } },
+        { t: 'Deep-work playlist from a woodworker you follow', short: 'deep-work playlist',
+          why: "Two hours of focus is the cheapest progress you'll buy today.",
+          w: { m: 0.85, g: 0.45, s: 0.2 } },
+        { t: 'Long read: who owns the recommendation layer?', short: 'who owns the layer?',
+          why: "Knowing who owns the layer is why you're building your own.",
+          w: { m: 0.5, g: 0.9, s: 0.5 } },
+        { t: "A neighbor's balcony-solar build log", short: 'balcony solar log',
+          why: 'Proof a neighbor shipped — the nudge your own build needs.',
+          w: { m: 0.7, g: 0.6, s: 0.8 } },
+        { t: "A fermentation subculture you've never seen", short: 'fermentation scene',
+          why: "No goal claims this one yet. It's here to tempt you.",
+          w: { m: 0.2, g: 0.35, s: 0.95 } }
+      ];
+      var streamEl = document.getElementById('stream');
+      function esc(s) {
+        return String(s).replace(/[&<>"']/g, function (ch) {
+          return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+        });
+      }
+      function renderStream(goal) {
+        // Each render re-argues the weights with a pinch of real entropy, so
+        // near-ties genuinely swap order from visit to visit — frame.rank ops.
+        var weighed = ITEMS.map(function (it) {
+          var s = it.w[goal] + (rnd() - 0.5) * 0.12;
+          return { t: it.t, short: it.short, why: it.why, s: Math.max(0.03, Math.min(0.99, s)) };
+        });
+        var sorted = weighed.slice().sort(function (a, b) { return b.s - a.s; });
+        if (goal === 'm') {
+          var leadItem = sorted[0];
+          streamEl.innerHTML =
+            '<div class="intent-layout intent-m">' +
+              '<article class="mission-card" style="--d:0">' +
+                '<div class="label">mission frame</div>' +
+                '<h3>' + esc(leadItem.short) + '</h3>' +
+                '<p class="intent-copy">' + esc(leadItem.why) + '</p>' +
+                '<div class="score">' + Math.round(leadItem.s * 100) + '% aligned</div>' +
+              '</article>' +
+              '<div class="mission-ladder">' +
+                sorted.slice(1).map(function (it, i) {
+                  var pct = Math.round(it.s * 100);
+                  return '<div class="mission-step" style="--d:' + (i + 1) + '">' +
+                    '<span class="rank">0' + (i + 2) + '</span>' +
+                    '<span class="title">' + esc(it.t) + '</span>' +
+                    '<span class="fit"><span class="score">' + pct + '</span><span class="fitbar"><span class="fitfill" style="width:' + pct + '%"></span></span></span>' +
+                  '</div>';
+                }).join('') +
+              '</div>' +
+            '</div>';
+        } else if (goal === 'g') {
+          // Planting order, not rank — care shows as growth (bed height + stem).
+          streamEl.innerHTML =
+            '<div class="intent-layout intent-g">' +
+              '<aside class="garden-note" style="--d:0">' +
+                '<div class="intent-eyebrow">garden view</div>' +
+                '<div class="intent-title">Tend what already has roots.</div>' +
+                '<p class="intent-copy">Beds keep their planting order. Attention shows as growth — never as rank.</p>' +
+              '</aside>' +
+              '<div class="garden-beds">' +
+                weighed.map(function (it, i) {
+                  var pct = Math.round(it.s * 100);
+                  var stem = Math.round(18 + it.s * 118);
+                  var bedH = 158 + stem;
+                  var tilt = between(-3, 3).toFixed(1);
+                  return '<article class="garden-bed" style="--d:' + (i + 1) + '; height:' + bedH + 'px; --stem:' + stem + 'px; --leaf:' + Math.round(112 + stem * 0.62) + 'px; --tilt:' + tilt + 'deg">' +
+                    '<div class="label">' + pct + '% tended</div>' +
+                    '<div class="title">' + esc(it.short) + '</div>' +
+                    '<div class="score">bed 0' + (i + 1) + '</div>' +
+                  '</article>';
+                }).join('') +
+              '</div>' +
+            '</div>';
+        } else {
+          // Tree silhouette: the trunk grows from a bottom-left root to the
+          // crown (strongest find); every other find hangs on a side branch
+          // forking off the trunk at parameter t. Entropy re-grows it each visit.
+          var BASE = [
+            { x: 68, y: 36 },
+            { x: 34, y: 44, t: 0.48 },
+            { x: 84, y: 58, t: 0.72 },
+            { x: 46, y: 68, t: 0.34 },
+            { x: 16, y: 62, t: 0.16 }
+          ];
+          // seed-shaped outline: paired radii keep the perimeter closed while
+          // every corner bulges differently — one draw per node per visit
+          function blobShape() {
+            var a = Math.round(between(42, 58)), b = Math.round(between(42, 58));
+            var c = Math.round(between(42, 58)), d = Math.round(between(42, 58));
+            return a + '% ' + (100 - a) + '% ' + b + '% ' + (100 - b) + '% / ' +
+                   c + '% ' + d + '% ' + (100 - d) + '% ' + (100 - c) + '%';
+          }
+          var pos = sorted.map(function (it, i) {
+            return {
+              x: BASE[i].x + between(-3, 3),
+              y: BASE[i].y + between(-3, 3),
+              size: Math.round(108 + it.s * 76),
+              blob: blobShape(),
+              lean: between(-8, 8).toFixed(1),
+              tilt: between(-10, 10).toFixed(1)
+            };
+          });
+          var W = streamEl.clientWidth, H = streamEl.clientHeight;
+          var links = '';
+          if (W > 0 && H > 0) {
+            var pts = pos.map(function (p) { return { x: p.x / 100 * W, y: p.y / 100 * H }; });
+            var root = { x: (7 + between(-1.5, 1.5)) / 100 * W, y: 0.96 * H };
+            var crown = pts[0];
+            var ctl = {
+              x: (root.x + crown.x) / 2 + between(-0.05, 0.03) * W,
+              y: (root.y + crown.y) / 2 + between(0.05, 0.11) * H
+            };
+            function onTrunk(t) {
+              var u = 1 - t;
+              return {
+                x: u * u * root.x + 2 * u * t * ctl.x + t * t * crown.x,
+                y: u * u * root.y + 2 * u * t * ctl.y + t * t * crown.y
+              };
+            }
+            // A limb is a FILLED tapered ribbon around a quadratic centerline:
+            // at each step, offset perpendicular to the tangent by half the
+            // local width, easing from w0 at the base to w1 at the tip.
+            function limb(a, c, b, w0, w1) {
+              var left = [], right = [];
+              for (var i = 0; i <= 12; i++) {
+                var t = i / 12, u = 1 - t;
+                var x = u * u * a.x + 2 * u * t * c.x + t * t * b.x;
+                var y = u * u * a.y + 2 * u * t * c.y + t * t * b.y;
+                var dx = 2 * u * (c.x - a.x) + 2 * t * (b.x - c.x);
+                var dy = 2 * u * (c.y - a.y) + 2 * t * (b.y - c.y);
+                var l = Math.hypot(dx, dy) || 1;
+                var w = (w0 + (w1 - w0) * Math.pow(t, 0.85)) / 2;
+                left.push((x - dy / l * w).toFixed(1) + ' ' + (y + dx / l * w).toFixed(1));
+                right.push((x + dy / l * w).toFixed(1) + ' ' + (y - dx / l * w).toFixed(1));
+              }
+              return 'M' + left.join(' L') + ' L' + right.reverse().join(' L') + ' Z';
+            }
+            function bow(a, b) {
+              return {
+                x: (a.x + b.x) / 2 + between(-28, 28),
+                y: (a.y + b.y) / 2 + between(-8, 26)
+              };
+            }
+            var paths =
+              '<path d="M' + (root.x - 30).toFixed(1) + ' ' + root.y.toFixed(1) +
+                ' L' + (root.x + 30).toFixed(1) + ' ' + root.y.toFixed(1) +
+                '" style="stroke-width:1; opacity:.3"/>' +
+              '<path class="limb" d="' + limb(root, ctl, crown, 17, 5) + '" style="--d:0; opacity:.55"/>';
+            for (var li = 1; li < pts.length; li++) {
+              var fork = onTrunk(BASE[li].t + between(-0.04, 0.04));
+              paths += '<path class="limb" d="' + limb(fork, bow(fork, pts[li]), pts[li], 7.5, 2) +
+                '" style="--d:' + li + '; opacity:.5"/>';
+            }
+            // bare twigs — explorations not yet taken
+            var TWIG_T = [0.28, 0.56, 0.82];
+            for (var ti = 0; ti < TWIG_T.length; ti++) {
+              var tf = onTrunk(TWIG_T[ti] + between(-0.03, 0.03));
+              var side = rnd() < 0.5 ? -1 : 1;
+              var tip = { x: tf.x + side * between(38, 86), y: tf.y - between(26, 72) };
+              paths += '<path class="limb" d="' + limb(tf, bow(tf, tip), tip, 4, 1) +
+                '" style="--d:' + (pts.length + ti) + '; opacity:.42"/>';
+            }
+            links = '<svg class="branch-svg" viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">' + paths + '</svg>';
+          }
+          streamEl.innerHTML =
+            '<div class="intent-layout intent-s sprout-map">' +
+              '<div class="intent-eyebrow">exploration</div>' +
+              '<p class="intent-copy">Exploration grows like a tree — every find is a branch; the strongest is the crown, for now.</p>' +
+              links +
+              sorted.map(function (it, i) {
+                var p = pos[i];
+                return '<article class="sprout-node' + (i === 0 ? ' is-top' : '') + '" style="--d:' + i + '; --x:' + p.x.toFixed(1) + '%; --y:' + p.y.toFixed(1) + '%; --size:' + p.size + 'px; --blob:' + p.blob + '; --lean:' + p.lean + 'deg; --tilt:' + p.tilt + 'deg">' +
+                  '<div><div class="title">' + esc(it.short) + '</div>' +
+                  '<div class="score">' + Math.round(it.s * 100) + '% novelty</div></div>' +
+                '</article>';
+              }).join('') +
+            '</div>';
+        }
+      }
+      var chips = document.getElementById('goal-chips');
+      if (chips) chips.addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        chips.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', 'false'); });
+        b.setAttribute('aria-pressed', 'true');
+        renderStream(b.dataset.goal);
+      });
+      renderStream('m');
+
+      // ---- 07 · interest type-cloud ----------------------------------------
+      var WORDS = ['local-first software', 'urban rewilding', 'balcony solar', 'mycology',
+        'slow web', 'letterpress', 'open logbooks', 'night cycling', 'commons law',
+        'fermentation', 'field recording', 'repair cafés', 'tidal energy', 'zine trades'];
+      var cloudEl = document.getElementById('typecloud');
+      var cloudState = WORDS.map(function () { return rnd(); }); // entropy per word
+      function paintCloud() {
+        var temp = parseInt(document.getElementById('cl-temp').value, 10) / 100;   // 0 cool → 1 warm
+        var spread = parseInt(document.getElementById('cl-spread').value, 10) / 100; // size variance
+        var hue = 250 - temp * 190; // 250 (cool ink) → 60 (warm ink)
+        cloudEl.innerHTML = '';
+        WORDS.forEach(function (w, i) {
+          var e = cloudState[i];
+          var size = Math.round(26 + e * (14 + spread * 40)); // 26 → up to 80px
+          var s = document.createElement('span');
+          s.textContent = w;
+          s.style.fontSize = size + 'px';
+          s.style.fontWeight = e > 0.66 ? 500 : 400;
+          s.style.opacity = (0.45 + e * 0.55).toFixed(2);
+          s.style.color = 'oklch(' + Math.round(30 + (1 - e) * 25) + '% ' + (0.015 + temp * 0.035).toFixed(3) + ' ' + Math.round(hue) + ')';
+          s.style.letterSpacing = size > 48 ? '-0.02em' : '0';
+          cloudEl.appendChild(s);
+        });
+      }
+      var reroll = document.getElementById('cl-noise');
+      if (reroll) reroll.addEventListener('click', function () {
+        cloudState = WORDS.map(function () { return rnd(); });
+        paintCloud();
+      });
+      ['cl-temp', 'cl-spread'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener('input', paintCloud);
+      });
+      paintCloud();
+
+      // ---- 08 · plant an interest ------------------------------------------
+      var seedIn = document.getElementById('seed-input');
+      var seedRow = document.getElementById('seedrow');
+      function plant() {
+        var v = (seedIn.value || '').trim();
+        if (!v) return;
+        var s = document.createElement('span');
+        s.className = 'seed';
+        s.textContent = v;
+        seedRow.appendChild(s); // frame.add — then the sprout css settles it
+        seedIn.value = '';
+        seedIn.focus();
+      }
+      var seedBtn = document.getElementById('seed-btn');
+      if (seedBtn) seedBtn.addEventListener('click', plant);
+      if (seedIn) seedIn.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.stopPropagation(); plant(); }
+      });
+
+      // ---- ambient motion loops --------------------------------------------
+      // Every hyperframe idles on autopilot — driving its own control — until
+      // the user touches that control. Then the frame is theirs. The two
+      // style-cloud slides drift forever; the drift entropy is hardware-random.
+      var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var touched = { cover: false, frame: false, tabs: false, step: false, goals: false, seeds: false };
+      var synthetic = false;
+      function synthClick(btn) { synthetic = true; btn.click(); synthetic = false; }
+      function isOn(id) { var s = document.querySelector('[data-od-id="' + id + '"]'); return s && s.classList.contains('active'); }
+
+      if (seg) seg.addEventListener('click', function () { if (!synthetic) touched.cover = true; });
+      if (sw) sw.addEventListener('click', function () { if (!synthetic) touched.frame = true; });
+      if (sw) sw.addEventListener('keydown', function () { touched.frame = true; });
+      if (tabs) tabs.addEventListener('click', function () { if (!synthetic) touched.tabs = true; });
+      [opNext, opPrev].forEach(function (b) { if (b) b.addEventListener('click', function () { if (!synthetic) touched.step = true; }); });
+      if (chips) chips.addEventListener('click', function () { if (!synthetic) touched.goals = true; });
+      if (seedBtn) seedBtn.addEventListener('click', function () { touched.seeds = true; });
+      if (seedIn) seedIn.addEventListener('keydown', function (e) { if (e.key === 'Enter') touched.seeds = true; });
+
+      if (!reduceMotion) {
+        // 01 · the subheader word carousels until you pick one
+        setInterval(function () {
+          if (touched.cover || !isOn('slide-cover')) return;
+          var btns = Array.prototype.slice.call(seg.querySelectorAll('button'));
+          var cur = 0;
+          btns.forEach(function (b, i) { if (b.getAttribute('aria-pressed') === 'true') cur = i; });
+          swapWord.style.opacity = '0';
+          setTimeout(function () { synthClick(btns[(cur + 1) % btns.length]); swapWord.style.opacity = '1'; }, 380);
+        }, 2700);
+
+        // 02 · the frame flips itself until you take the switch
+        setInterval(function () {
+          if (touched.frame || !isOn('slide-premise')) return;
+          setFrame(sw.getAttribute('aria-checked') !== 'true');
+        }, 5200);
+
+        // 03 · renderers rotate until you choose one
+        setInterval(function () {
+          if (touched.tabs || !isOn('slide-format')) return;
+          var btns = Array.prototype.slice.call(tabs.querySelectorAll('button'));
+          var cur = 0;
+          btns.forEach(function (b, i) { if (b.getAttribute('aria-selected') === 'true') cur = i; });
+          synthClick(btns[(cur + 1) % btns.length]);
+        }, 4600);
+
+        // 04 · the spotlight tours the cloud — one card, 2–7 ops, next card
+        setInterval(function () {
+          if (!isOn('slide-morph-1') || morphTimer) return;
+          driftTick('drift');
+        }, 1400);
+
+        // 05 · the transition plays itself, forward then back, until you step in
+        var opDir = 1;
+        setInterval(function () {
+          if (touched.step || !isOn('slide-grammar')) return;
+          if (opIdx >= OPS.length) opDir = -1;
+          if (opIdx <= 0) opDir = 1;
+          synthClick(opDir > 0 ? opNext : opPrev);
+        }, 1500);
+
+        // 06 · goals rotate until you declare yours
+        var GOAL_ORDER = ['m', 'g', 's'];
+        setInterval(function () {
+          if (touched.goals || !isOn('slide-algorithm')) return;
+          var curBtn = chips.querySelector('button[aria-pressed="true"]');
+          var cur = GOAL_ORDER.indexOf(curBtn ? curBtn.dataset.goal : 'm');
+          synthClick(chips.querySelector('button[data-goal="' + GOAL_ORDER[(cur + 1) % GOAL_ORDER.length] + '"]'));
+        }, 5000);
+
+        // 07 · the interest cloud breathes — a few words random-walk each beat
+        setInterval(function () {
+          if (!isOn('slide-morph-2')) return;
+          for (var k = 0; k < 4; k++) {
+            var i = Math.floor(rnd() * cloudState.length);
+            cloudState[i] = Math.min(1, Math.max(0, cloudState[i] + (rnd() - 0.5) * 0.34));
+          }
+          paintCloud();
+        }, 2400);
+
+        // 08 · three example seeds plant themselves until you sow your own
+        var AUTO_SEEDS = ['balcony solar', 'slow web', 'night cycling'];
+        var autoPlanted = 0;
+        setInterval(function () {
+          if (touched.seeds || autoPlanted >= AUTO_SEEDS.length || !isOn('slide-closing')) return;
+          var s = document.createElement('span');
+          s.className = 'seed';
+          s.textContent = AUTO_SEEDS[autoPlanted++];
+          seedRow.appendChild(s);
+        }, 1400);
+      }
+    })();
+  </script>
+
+
+<script data-od-snapshot-bridge>(function(){
+  var SNAPSHOT_STYLE_PROPS = [
+    'display','position','box-sizing','width','height','min-width','max-width','min-height','max-height',
+    'margin','margin-top','margin-right','margin-bottom','margin-left',
+    'padding','padding-top','padding-right','padding-bottom','padding-left',
+    'border','border-top','border-right','border-bottom','border-left','border-radius',
+    'font','font-family','font-size','font-weight','font-style','line-height','letter-spacing',
+    'color','background-color','opacity','transform','transform-origin','overflow','overflow-x','overflow-y',
+    'white-space','text-align','vertical-align','object-fit','object-position',
+    'flex','flex-direction','flex-wrap','flex-grow','flex-shrink','flex-basis',
+    'grid','grid-template-columns','grid-template-rows','grid-column','grid-row',
+    'gap','row-gap','column-gap','align-items','align-content','align-self',
+    'justify-items','justify-content','justify-self','inset','top','right','bottom','left',
+    'z-index','box-shadow','text-shadow'
+  ];
+  function copyComputedStyle(source, target){
+    if (!source || !target || source.nodeType !== 1 || target.nodeType !== 1) return;
+    var computed = window.getComputedStyle(source);
+    var style = target.getAttribute('style') || '';
+    for (var i = 0; i < SNAPSHOT_STYLE_PROPS.length; i++){
+      var prop = SNAPSHOT_STYLE_PROPS[i];
+      var value = computed.getPropertyValue(prop);
+      if (value) style += prop + ':' + value + ';';
+    }
+    target.setAttribute('style', style);
+  }
+  function syncElementState(source, target){
+    var tag = source.tagName ? source.tagName.toLowerCase() : '';
+    if (tag === 'img' && source.currentSrc) target.setAttribute('src', source.currentSrc);
+    if (tag === 'input' || tag === 'textarea') target.setAttribute('value', source.value || '');
+    if (tag === 'canvas') {
+      try {
+        var img = document.createElement('img');
+        img.setAttribute('src', source.toDataURL('image/png'));
+        img.setAttribute('style', target.getAttribute('style') || '');
+        target.parentNode && target.parentNode.replaceChild(img, target);
+      } catch (_) {}
+    }
+  }
+  function inlineSnapshotStyles(originalRoot, cloneRoot){
+    copyComputedStyle(originalRoot, cloneRoot);
+    syncElementState(originalRoot, cloneRoot);
+    var originals = originalRoot.querySelectorAll('*');
+    var clones = cloneRoot.querySelectorAll('*');
+    var count = Math.min(originals.length, clones.length, 3500);
+    for (var i = 0; i < count; i++){
+      copyComputedStyle(originals[i], clones[i]);
+      syncElementState(originals[i], clones[i]);
+    }
+    var scripts = cloneRoot.querySelectorAll('script');
+    for (var s = scripts.length - 1; s >= 0; s--) scripts[s].remove();
+    var links = cloneRoot.querySelectorAll('link[rel~="stylesheet"], link[rel~="preload"], link[rel~="preconnect"]');
+    for (var l = links.length - 1; l >= 0; l--) links[l].remove();
+    var styles = cloneRoot.querySelectorAll('style');
+    for (var st = 0; st < styles.length; st++) {
+      styles[st].textContent = (styles[st].textContent || '')
+        .replace(/@import[^;]+;/gi, '')
+        .replace(/@font-face\s*\{[^}]*\}/gi, '');
+    }
+  }
+  function pruneHiddenSnapshotNodes(originalRoot, cloneRoot){
+    var originals = originalRoot.querySelectorAll('*');
+    var clones = cloneRoot.querySelectorAll('*');
+    var count = Math.min(originals.length, clones.length);
+    var removals = [];
+    for (var i = 0; i < count; i++){
+      var original = originals[i];
+      var clone = clones[i];
+      if (!original || !clone || !clone.parentNode) continue;
+      var computed = window.getComputedStyle(original);
+      if (computed && (computed.display === 'none' || computed.visibility === 'hidden')) {
+        removals.push(clone);
+      }
+    }
+    for (var r = removals.length - 1; r >= 0; r--){
+      if (removals[r].parentNode) removals[r].parentNode.removeChild(removals[r]);
+    }
+  }
+  function waitForImages(){
+    var imgs = Array.prototype.slice.call(document.images || []);
+    return Promise.all(imgs.map(function(img){
+      if (img.complete) return Promise.resolve();
+      return new Promise(function(resolve){
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+      });
+    }));
+  }
+  function scrollOffset(){
+    var doc = document.documentElement;
+    var body = document.body;
+    return {
+      x: Math.max(window.scrollX || 0, doc ? doc.scrollLeft || 0 : 0, body ? body.scrollLeft || 0 : 0),
+      y: Math.max(window.scrollY || 0, doc ? doc.scrollTop || 0 : 0, body ? body.scrollTop || 0 : 0)
+    };
+  }
+  function escapeAttribute(value){
+    return String(value || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  }
+  function snapshotBackgroundColor(){
+    try {
+      var probe = window.getComputedStyle(document.body || document.documentElement);
+      var bg = probe && probe.backgroundColor || '';
+      if (!bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)') return '#ffffff';
+      return bg;
+    } catch (_) { return '#ffffff'; }
+  }
+  // After painting, sample the canvas: a uniform (single-color) bitmap means
+  // the foreignObject rasterizer painted nothing — Chromium frequently refuses
+  // to paint <foreignObject> HTML loaded via <img>. Treating that as an honest
+  // 'empty-render' error (instead of shipping the background-only frame) lets
+  // the host fall back / surface a real failure rather than a silent black PNG.
+  function canvasLooksBlank(ctx, cw, ch){
+    try {
+      var data = ctx.getImageData(0, 0, cw, ch).data;
+      var step = Math.max(4, Math.floor((cw * ch) / 4096)) * 4;
+      var first = null, samples = 0;
+      for (var i = 0; i + 3 < data.length; i += step){
+        samples++;
+        if (!first){ first = [data[i], data[i+1], data[i+2], data[i+3]]; continue; }
+        if (Math.abs(data[i]-first[0]) > 6 || Math.abs(data[i+1]-first[1]) > 6 ||
+            Math.abs(data[i+2]-first[2]) > 6 || Math.abs(data[i+3]-first[3]) > 6) return false;
+      }
+      return samples > 8;
+    } catch (_) { return false; }
+  }
+  // Rasterize the current view (or the whole document, when opts.full) via an
+  // SVG <foreignObject>. Returns a Promise so it can be reused by both the
+  // od:snapshot message handler AND the export-capture bridge (image export /
+  // PDF) — the foreignObject path is fast and never blocks on external
+  // image network loads the way a DOM-cloning rasterizer does.
+  function captureSnapshot(opts){
+    opts = opts || {};
+    return new Promise(function(resolve, reject){
+      var w = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
+      var h = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
+      var dpr = window.devicePixelRatio || 1;
+      var bgColor = snapshotBackgroundColor();
+      var docW = Math.max(w, document.documentElement.scrollWidth || 0, document.body ? document.body.scrollWidth : 0);
+      var docH = Math.max(h, document.documentElement.scrollHeight || 0, document.body ? document.body.scrollHeight : 0);
+      var full = !!opts.full;
+      var capW = full ? docW : w;
+      var capH = full ? docH : h;
+      var clone = document.documentElement.cloneNode(true);
+      clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+      inlineSnapshotStyles(document.documentElement, clone);
+      pruneHiddenSnapshotNodes(document.documentElement, clone);
+      var scroll = full ? { x: 0, y: 0 } : scrollOffset();
+      var cloneBody = clone.querySelector('body');
+      var rootStyle = clone.getAttribute('style') || '';
+      var bodyStyle = cloneBody ? cloneBody.getAttribute('style') || '' : '';
+      var bodyContent = cloneBody ? cloneBody.innerHTML : clone.innerHTML;
+      var wrapperStyle = rootStyle + bodyStyle +
+        'margin:0;position:relative;left:' + (-scroll.x) + 'px;top:' + (-scroll.y) + 'px;' +
+        'width:' + docW + 'px;height:' + docH + 'px;overflow:visible;';
+      var html = '<div xmlns="http://www.w3.org/1999/xhtml" style="' + escapeAttribute(wrapperStyle) + '">' + bodyContent + '</div>';
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + capW + '" height="' + capH + '" viewBox="0 0 ' + capW + ' ' + capH + '">' +
+        '<foreignObject x="0" y="0" width="' + docW + '" height="' + docH + '">' +
+        html +
+        '</foreignObject></svg>';
+      var img = new Image();
+      img.onload = function(){
+        try {
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.floor(capW * dpr));
+          canvas.height = Math.max(1, Math.floor(capH * dpr));
+          var ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('no 2d context');
+          ctx.scale(dpr, dpr);
+          // Opaque base so a transparent (un-painted) raster never flattens to
+          // pure black in clipboards / PNG viewers.
+          ctx.fillStyle = bgColor;
+          ctx.fillRect(0, 0, capW, capH);
+          ctx.drawImage(img, 0, 0, capW, capH);
+          if (canvasLooksBlank(ctx, canvas.width, canvas.height)) {
+            reject(new Error('empty-render'));
+            return;
+          }
+          resolve({ dataUrl: canvas.toDataURL('image/png'), w: canvas.width, h: canvas.height });
+        } catch (err) {
+          reject(err instanceof Error ? err : new Error(String(err && err.message || err)));
+        }
+      };
+      img.onerror = function(){ reject(new Error('snapshot image failed')); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    });
+  }
+  // Exposed so the export-capture bridge (same document) can reuse this renderer.
+  window.__odCaptureSnapshot = function(opts){
+    return waitForImages().then(function(){ return captureSnapshot(opts || {}); });
+  };
+  window.addEventListener('message', function(ev){
+    var data = ev && ev.data;
+    if (!data || data.type !== 'od:snapshot' || !data.id) return;
+    window.__odCaptureSnapshot({ full: !!data.full }).then(function(res){
+      window.parent.postMessage({ type: 'od:snapshot:result', id: String(data.id), dataUrl: res.dataUrl, w: res.w, h: res.h }, '*');
+    }, function(err){
+      window.parent.postMessage({ type: 'od:snapshot:result', id: String(data.id), error: String(err && err.message || err) }, '*');
+    });
+  });
+})();</script><script data-od-export-capture-bridge>(function(){
+  function raf(){ return new Promise(function(r){ requestAnimationFrame(function(){ r(); }); }); }
+  function settle(){
+    var fonts = (document.fonts && document.fonts.ready) ? document.fonts.ready.catch(function(){}) : Promise.resolve();
+    var imgs = Promise.all(Array.prototype.slice.call(document.images||[]).map(function(img){
+      if (img.complete) return Promise.resolve();
+      return new Promise(function(r){ img.addEventListener('load', r, {once:true}); img.addEventListener('error', r, {once:true}); });
+    }));
+    return Promise.all([fonts, imgs]).then(raf).then(raf);
+  }
+  function deckState(){
+    try { if (typeof window.__odDeckSlideState === 'function') return window.__odDeckSlideState(); } catch(_){}
+    return { active: 0, count: 1 };
+  }
+  function navTo(index, delay){
+    return new Promise(function(resolve){
+      try { window.postMessage({ type:'od:slide', action:'go', index: index }, '*'); } catch(_){}
+      var tries = 0;
+      function check(){
+        tries++;
+        if (deckState().active === index || tries > 14) { resolve(); return; }
+        setTimeout(check, 80);
+      }
+      setTimeout(check, Math.max(60, delay||0));
+    });
+  }
+  function captureImage(deck){
+    // Reuse the shared SVG-foreignObject renderer (injectSnapshotBridge). For a
+    // deck the active slide fills the viewport, so a viewport capture IS the
+    // slide; a non-deck page captures the full document.
+    if (typeof window.__odCaptureSnapshot !== 'function') {
+      return Promise.reject(new Error('snapshot renderer unavailable'));
+    }
+    return window.__odCaptureSnapshot({ full: !deck });
+  }
+  function notes(){
+    var el = document.getElementById('speaker-notes');
+    if (!el) return '';
+    var t = el.textContent || '';
+    try { var j = JSON.parse(t); if (Array.isArray(j)) return j; } catch(_){}
+    return t.replace(/\s+/g,' ').trim();
+  }
+  function send(msg){ try { window.parent.postMessage(msg, '*'); } catch(_){} }
+  function run(req){
+    var id = req.id;
+    var deck = !!req.deck;
+    var single = !!req.single;
+    var delay = req.delay || 350;
+    Promise.resolve().then(function(){
+      var st = deckState();
+      var total = (!single && deck && st.count > 1) ? st.count : 1;
+      var notesAll = notes();
+      function noteFor(i){ return Array.isArray(notesAll) ? (notesAll[i]||'') : (i===0 ? notesAll : ''); }
+      var idx = 0;
+      function step(){
+        if (idx >= total){ send({ type:'od:export-capture:done', id:id, total: total }); return; }
+        var i = idx;
+        var navP = (!single && deck && total > 1) ? navTo(i, delay) : Promise.resolve();
+        navP.then(settle).then(function(){
+          try {
+            captureImage(deck).then(function(img){
+              send({ type:'od:export-capture:slide', id:id, index:i, total:total, dataUrl: img.dataUrl, w: img.w, h: img.h, notes: noteFor(i) });
+              idx++; setTimeout(step, 0);
+            }).catch(function(err){ send({ type:'od:export-capture:error', id:id, error: String(err && err.message || err) }); });
+          } catch(err){ send({ type:'od:export-capture:error', id:id, error: String(err && err.message || err) }); }
+        });
+      }
+      step();
+    }).catch(function(err){
+      send({ type:'od:export-capture:error', id:id, error: String(err && err.message || err) });
+    });
+  }
+  window.addEventListener('message', function(ev){
+    var data = ev && ev.data;
+    if (!data || data.type !== 'od:export-capture' || !data.id) return;
+    run(data);
+  });
+})();</script><script data-od-srcdoc-transport-activation>(function(){
+  window.addEventListener('message', function(ev){
+    var data = ev && ev.data;
+    if (!data || data.type !== 'od:srcdoc-transport-activate' || typeof data.html !== 'string') return;
+    document.open();
+    document.write(data.html);
+    document.close();
+  });
+})();</script></body></html>
