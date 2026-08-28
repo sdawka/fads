@@ -1,0 +1,17 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "allowJs": false,
+    "noEmit": true,
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true
+  },
+  "include": [
+    "src",
+    "astro.config.ts",
+    "vitest.config.ts",
+    "vitest.workers.config.ts",
+    "playwright.config.ts"
+  ],
+  "exclude": ["test"]
+}

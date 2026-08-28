@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "fads-test",
+  "main": "test/fixtures/worker.ts",
+  "compatibility_date": "2026-08-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fads-test",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+    },
+  ],
+  "queues": {
+    "producers": [{ "binding": "INGESTION_QUEUE", "queue": "fads-ingestion-test" }],
+    "consumers": [{ "queue": "fads-ingestion-test" }],
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "OWNER_SESSION", "class_name": "OwnerSessionDO" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OwnerSessionDO"] }],
+}
