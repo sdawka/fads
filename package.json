@@ -17,6 +17,8 @@
     "format:check": "prettier --check .",
     "test": "npm run test:unit && vitest run --config vitest.workers.config.ts",
     "test:unit": "vitest run test/unit",
+    "test:real-worker": "npm run build && vitest run --config vitest.real-worker.config.ts",
+    "test:typecheck": "tsc -p test/tsconfig.json --noEmit",
     "test:e2e": "playwright test",
     "cf-typegen": "wrangler types src/worker-configuration.d.ts"
   },

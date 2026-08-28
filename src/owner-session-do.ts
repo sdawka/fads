@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
+import type { AppEnv } from "./app-env";
 
-export class OwnerSessionDO extends DurableObject<Env> {
-  constructor(ctx: DurableObjectState, env: Env) {
+export class OwnerSessionDO extends DurableObject<AppEnv> {
+  constructor(ctx: DurableObjectState, env: AppEnv) {
     super(ctx, env);
     void ctx.blockConcurrencyWhile(() => {
       this.ctx.storage.sql.exec(
@@ -11,7 +12,8 @@ export class OwnerSessionDO extends DurableObject<Env> {
     });
   }
 
-  record(event: string): void {
+  record(event: string): Promise<void> {
     this.ctx.storage.sql.exec("INSERT INTO session_events (event) VALUES (?)", event);
+    return Promise.resolve();
   }
 }

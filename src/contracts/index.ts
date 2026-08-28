@@ -3,11 +3,26 @@ import { z } from "zod";
 const NonEmptyIdSchema = z.string().trim().min(1);
 const TimestampSchema = z.iso.datetime({ offset: true });
 const PercentSchema = z.int().min(0).max(100);
+const HttpUrlSchema = z.url().refine((value) => {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}, "Expected an HTTP(S) URL");
+const AtUriSchema = z
+  .string()
+  .regex(
+    /^at:\/\/did:[a-z0-9]+:[a-zA-Z0-9._:%-]+\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._~-]+$/,
+    "Expected a canonical AT URI",
+  );
+const ProvenanceReferenceSchema = z.union([HttpUrlSchema, AtUriSchema]);
 
 export const ProvenanceSchema = z.object({
   source: NonEmptyIdSchema,
   observedAt: TimestampSchema,
-  reference: z.string().url().optional(),
+  reference: ProvenanceReferenceSchema.optional(),
 });
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 
@@ -24,36 +39,48 @@ export const SafetyLabelSchema = z.object({
 export type SafetyLabel = z.infer<typeof SafetyLabelSchema>;
 
 export const SafeBlockSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("heading"),
-    text: NonEmptyIdSchema,
-    level: z.int().min(1).max(6).default(2),
-  }),
-  z.object({ kind: z.literal("paragraph"), text: NonEmptyIdSchema }),
-  z.object({
-    kind: z.literal("quote"),
-    text: NonEmptyIdSchema,
-    attribution: z.string().trim().min(1).optional(),
-  }),
-  z.object({
-    kind: z.literal("code"),
-    code: z.string(),
-    language: z.string().trim().min(1).optional(),
-  }),
-  z.object({ kind: z.literal("image"), src: z.string().url(), alt: z.string() }),
-  z.object({ kind: z.literal("audio"), src: z.string().url(), transcript: z.string().optional() }),
-  z.object({ kind: z.literal("video"), src: z.string().url(), transcript: z.string().optional() }),
-  z.object({ kind: z.literal("link"), href: z.string().url(), text: NonEmptyIdSchema }),
+  z
+    .object({
+      kind: z.literal("heading"),
+      text: NonEmptyIdSchema,
+      level: z.int().min(1).max(6).default(2),
+    })
+    .strict(),
+  z.object({ kind: z.literal("paragraph"), text: NonEmptyIdSchema }).strict(),
+  z
+    .object({
+      kind: z.literal("quote"),
+      text: NonEmptyIdSchema,
+      attribution: z.string().trim().min(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("code"),
+      code: z.string(),
+      language: z.string().trim().min(1).optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("image"), src: HttpUrlSchema, alt: z.string() }).strict(),
+  z
+    .object({ kind: z.literal("audio"), src: HttpUrlSchema, transcript: z.string().optional() })
+    .strict(),
+  z
+    .object({ kind: z.literal("video"), src: HttpUrlSchema, transcript: z.string().optional() })
+    .strict(),
+  z.object({ kind: z.literal("link"), href: HttpUrlSchema, text: NonEmptyIdSchema }).strict(),
 ]);
 export type SafeBlock = z.infer<typeof SafeBlockSchema>;
 
-export const MediaAttachmentSchema = z.object({
-  id: NonEmptyIdSchema,
-  kind: z.enum(["image", "audio", "video"]),
-  url: z.string().url(),
-  alt: z.string().optional(),
-  provenance: ProvenanceSchema,
-});
+export const MediaAttachmentSchema = z
+  .object({
+    id: NonEmptyIdSchema,
+    kind: z.enum(["image", "audio", "video"]),
+    url: HttpUrlSchema,
+    alt: z.string().optional(),
+    provenance: ProvenanceSchema,
+  })
+  .strict();
 export type MediaAttachment = z.infer<typeof MediaAttachmentSchema>;
 
 export const ContentEnvelopeSchema = z.object({
@@ -106,7 +133,7 @@ export const EditionRequestSchema = z.object({
   requestedAt: TimestampSchema,
   curiosity: PercentSchema,
   energy: PercentSchema,
-  limit: z.int().min(0).max(12).default(6),
+  limit: z.int().min(0).max(12).default(12),
 });
 export type EditionRequest = z.infer<typeof EditionRequestSchema>;
 

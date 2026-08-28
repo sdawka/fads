@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   ContentEnvelopeSchema,
+  EditionRequestSchema,
   InteractionEventSchema,
+  MediaAttachmentSchema,
+  ProvenanceSchema,
   QueueMessageSchema,
   RecommendationSlateSchema,
   SafeBlockSchema,
@@ -34,6 +37,44 @@ describe("foundation contracts", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects unsafe renderable URL protocols", () => {
+    const unsafeUrls = ["javascript:alert(1)", "data:text/html,<script>alert(1)</script>"];
+
+    for (const url of unsafeUrls) {
+      expect(SafeBlockSchema.safeParse({ kind: "link", href: url, text: "unsafe" }).success).toBe(
+        false,
+      );
+      expect(
+        MediaAttachmentSchema.safeParse({
+          id: "media-1",
+          kind: "image",
+          url,
+          provenance: { source: "atproto", observedAt: timestamp },
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("accepts canonical AT URIs as non-rendered provenance references", () => {
+    expect(
+      ProvenanceSchema.safeParse({
+        source: "atproto",
+        observedAt: timestamp,
+        reference: "at://did:plc:alice/app.bsky.feed.post/1",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects executable extra fields instead of stripping them", () => {
+    expect(
+      SafeBlockSchema.safeParse({
+        kind: "paragraph",
+        text: "A paragraph",
+        html: "<script>alert(1)</script>",
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects curiosity and energy outside the 0..100 integer range", () => {
     const result = RecommendationSlateSchema.safeParse({
       id: "slate-1",
@@ -54,6 +95,17 @@ describe("foundation contracts", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("defaults an edition request to the approved 12-item size", () => {
+    const request = EditionRequestSchema.parse({
+      ownerId: "owner-1",
+      requestedAt: timestamp,
+      curiosity: 50,
+      energy: 50,
+    });
+
+    expect(request.limit).toBe(12);
   });
 
   it("accepts only the frozen interaction kinds", () => {

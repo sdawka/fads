@@ -1,3 +1,5 @@
+import { isConceptPath, isolateConceptResponse } from "./concept-isolation";
+
 export function createFetchHandler<RequestType extends Request, Environment, Context>(
   astroHandler: (request: RequestType, env: Environment, context: Context) => Promise<Response>,
 ) {
@@ -6,6 +8,9 @@ export function createFetchHandler<RequestType extends Request, Environment, Con
       return Response.json({ status: "ok" });
     }
 
-    return astroHandler(request, env, context);
+    const response = await astroHandler(request, env, context);
+    return isConceptPath(new URL(request.url).pathname)
+      ? isolateConceptResponse(response)
+      : response;
   };
 }
