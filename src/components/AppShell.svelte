@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  import type { ContentEnvelope, FramedRecommendation } from "../contracts";
+  import type { ContentEnvelope } from "../contracts";
   import {
     clearOfflineState,
     registerOfflineServiceWorker,
@@ -15,7 +15,7 @@
     OwnerExport,
     Surface,
   } from "./models";
-  import { describeControlValue, moveReader } from "./reading";
+  import { describeControlValue, describeDecisionFactor, moveReader } from "./reading";
   import SafeBlocks from "./SafeBlocks.svelte";
 
   export let activeSurface: Surface = "edition";
@@ -38,6 +38,8 @@
   let rssUrl = "";
   let managementLoading = false;
   let offlineRegistration: ServiceWorkerRegistration | undefined;
+  let offlineState: "checking" | "ready" | "unavailable" = "checking";
+  let ownerDid = "";
 
   let offlineRegistrationPromise: Promise<ServiceWorkerRegistration | undefined> | undefined;
   function ensureOfflineRegistration() {
@@ -61,11 +63,13 @@
 
   onMount(async () => {
     offlineRegistration = await ensureOfflineRegistration();
+    offlineState = offlineRegistration ? "ready" : "unavailable";
     const uiClient = client ?? createBrowserUiClient();
     client = uiClient;
     try {
       const inspected = await uiClient.session();
       session = inspected.authenticated ? "authenticated" : "signed-out";
+      ownerDid = inspected.did ?? "";
       if (session === "authenticated" && activeSurface === "edition") {
         edition = await uiClient.activeEdition();
         atEnd = edition?.completed ?? false;
@@ -343,13 +347,15 @@
   }
 
   function formatOf(content: ContentEnvelope): string {
-    if (content.blocks.some((block) => block.kind === "video")) return "VIDEO";
-    if (content.blocks.some((block) => block.kind === "audio")) return "AUDIO";
+    if (
+      content.blocks.some((block) => block.kind === "video") ||
+      content.media.some((attachment) => attachment.kind === "video")
+    ) return "VIDEO";
+    if (
+      content.blocks.some((block) => block.kind === "audio") ||
+      content.media.some((attachment) => attachment.kind === "audio")
+    ) return "AUDIO";
     return "READ";
-  }
-
-  function factorPercent(factor: FramedRecommendation["decisionTrace"]["factors"][number]): string {
-    return `${Math.round(Math.abs(factor.weight) * 100)}%`;
   }
 </script>
 
@@ -395,7 +401,7 @@
       <span class="private-mark"><span aria-hidden="true">●</span> PRIVATE</span>
     </header>
 
-    <p class="sr-status" aria-live="polite" role="status">{statusMessage}</p>
+    {#if statusMessage}<p class="status-banner" aria-live="polite" role="status">{statusMessage}</p>{/if}
 
     <main id="main-content" class:reader-main={activeSurface === "edition"}>
       {#if activeSurface === "edition"}
@@ -442,7 +448,7 @@
               <div class="article-body">
                 <p class="published">{formatDate(item.publishedAt)} · {frame.frame}</p>
                 <h1 id="article-title">{title}</h1>
-                <SafeBlocks blocks={item.blocks} skipFirstHeading={true} />
+                <SafeBlocks blocks={item.blocks} media={item.media} skipFirstHeading={true} />
               </div>
               <div class="feedback" aria-label="Tune this kind of recommendation">
                 <p>Teach the next edition</p>
@@ -452,7 +458,7 @@
                   <button type="button" on:click={() => react("good_surprise")}>Good surprise</button>
                   <button type="button" on:click={() => react("not_now")}>Not now</button>
                   <button type="button" on:click={() => react("mute_source")}>Mute source</button>
-                  <button class:chosen={kept.has(item.id)} type="button" on:click={() => react("keep")}>Keep</button>
+                  <button class:chosen={keeps.some((keep) => keep.contentId === item.id)} type="button" on:click={() => react("keep")}>Keep</button>
                 </div>
               </div>
             </article>
@@ -466,7 +472,7 @@
                   {#each frame.decisionTrace.factors as factor, index}
                     <li>
                       <span class="factor-number">{String(index + 1).padStart(2, "0")}</span>
-                      <div><strong>{factor.factor}</strong><span>{factorPercent(factor)} influence</span></div>
+                      <div><strong>{factor.factor}</strong><span>{describeDecisionFactor(factor)}</span></div>
                     </li>
                   {/each}
                 </ol>
@@ -505,10 +511,10 @@
           <header><p class="eyebrow">WHAT MAY ENTER</p><h1 id="sources-title">Sources</h1><p>Your source list is private. A source must be allowed before it can appear.</p></header>
           {#if managementLoading}<p role="status">Loading your sources…</p>{/if}
           <div class="management-grid">
-            <section aria-labelledby="atproto-title"><p class="section-number">01 · SOCIAL</p><h2 id="atproto-title">ATProto</h2><p class="connection"><span aria-hidden="true">●</span> Connected as owner</p><p class="muted-note">Your owner connection is managed by ATProto OAuth.</p></section>
+            <section aria-labelledby="atproto-title"><p class="section-number">01 · SOCIAL</p><h2 id="atproto-title">ATProto</h2><p class="connection"><span aria-hidden="true">●</span> Signed in{ownerDid ? ` as ${ownerDid}` : ""}</p><p class="muted-note">Source sync uses the configured owner’s ATProto OAuth session.</p></section>
             <section aria-labelledby="rss-title"><p class="section-number">02 · PUBLICATIONS</p><h2 id="rss-title">RSS</h2><form on:submit|preventDefault={addSource}><label for="rss-url">Feed URL</label><div class="inline-field"><input id="rss-url" type="url" required placeholder="https://example.com/feed.xml" bind:value={rssUrl} /><button class="button primary" type="submit">Add source</button></div></form><div class="row-actions"><label class="button quiet" for="opml-file">Import OPML</label><input class="visually-hidden" id="opml-file" type="file" accept=".opml,.xml,text/xml" on:change={importOpmlFile} /><button class="text-button" type="button" on:click={async () => { if (!client) return; try { const opml = await client.exportOpml(); const blob = new Blob([opml], { type: "text/x-opml" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "fads-sources.opml"; anchor.click(); URL.revokeObjectURL(url); statusMessage = "OPML exported."; } catch (error) { statusMessage = error instanceof Error ? error.message : "OPML export failed."; } }}>Export OPML</button></div></section>
           </div>
-          {#if rssSources.length}<ul class="source-list">{#each rssSources as source}<li><div><strong>{source.displayName}</strong><small>{source.url ?? "ATProto"}</small></div><span>{source.status === "error" ? source.lastError : source.status}</span><button type="button" on:click={() => refreshSource(source.id)}>Refresh</button><button type="button" on:click={() => toggleSourceMute(source.id)}>{preferences.mutedSourceIds.includes(source.id) ? "Unmute" : "Mute"}</button><button type="button" on:click={() => removeSource(source.id)}>Remove</button></li>{/each}</ul>{/if}
+          {#if rssSources.length}<ul class="source-list">{#each rssSources as source}<li><div><strong>{source.displayName}</strong><small>{source.url ?? "ATProto"}</small></div><span>{source.status === "error" ? source.lastError : source.status}</span><button type="button" on:click={() => refreshSource(source.id)}>Refresh</button><button type="button" on:click={() => toggleSourceMute(source.id)}>{preferences.mutedSourceIds.includes(source.id) ? "Unmute" : "Mute"}</button><button type="button" on:click={() => removeSource(source.id)}>Remove</button></li>{/each}</ul>{:else if !managementLoading}<p class="empty-note">No RSS sources yet. Add one above or import an OPML file.</p>{/if}
         </section>
       {:else if activeSurface === "garden"}
         <section class="management-surface" aria-labelledby="garden-title">
@@ -517,14 +523,14 @@
             <section aria-labelledby="manual-title"><p class="section-number">ROOTED</p><h2 id="manual-title">Your interests</h2>{#if managementLoading}<p role="status">Loading your garden…</p>{/if}<ul class="tag-list">{#each manualInterests as interest}<li><span>{interest.value}</span><button type="button" aria-label={`Remove ${interest.value}`} on:click={() => removeInterest(interest.id)}>×</button></li>{/each}</ul><form class="inline-field" on:submit|preventDefault={addInterest}><label class="visually-hidden" for="interest">New interest</label><input id="interest" name="interest" required placeholder="Add an interest" /><button class="button primary" type="submit">Add</button></form></section>
             <section aria-labelledby="suggestions-title"><p class="section-number">WAITING FOR YOU</p><h2 id="suggestions-title">Suggestions</h2>{#if suggestions.length}<ul class="suggestion-list">{#each suggestions as suggestion}<li><span><strong>{suggestion.value}</strong><small>Seen across {suggestion.evidenceCount} allowed sources</small></span><button type="button" aria-label={`Confirm ${suggestion.value}`} on:click={() => decideSuggestion(suggestion, "confirm")}>Confirm</button><button type="button" aria-label={`Reject ${suggestion.value}`} on:click={() => decideSuggestion(suggestion, "reject")}>Dismiss</button></li>{/each}</ul>{:else}<p>Every suggestion has been decided.</p>{/if}</section>
           </div>
-          <section class="learned" aria-labelledby="learned-title"><p class="section-number">DIRECTIONAL, NOT DEFINING</p><h2 id="learned-title">What your actions are changing</h2><dl><div><dt>Long-form essays</dt><dd><span style="--amount: 64%"></span>more often</dd></div><div><dt>Breaking news</dt><dd><span style="--amount: 28%"></span>less often</dd></div></dl></section>
+          <section class="learned" aria-labelledby="learned-title"><p class="section-number">DIRECTIONAL, NOT DEFINING</p><h2 id="learned-title">What your actions are changing</h2><p>Your edition reactions adjust future ranking. The exact stored adjustments are included in your private export; a live inspection view is not available yet.</p></section>
         </section>
       {:else}
         <section class="management-surface settings" aria-labelledby="settings-title">
           <header><p class="eyebrow">BOUNDARIES &amp; PORTABILITY</p><h1 id="settings-title">Settings</h1><p>The guardrails stay explicit. Your private data stays portable.</p></header>
           <div class="settings-list">
             <section><div><p class="section-number">ALLOWANCES</p><h2>Content labels</h2><p>Excluded labels are hard gates, never ranking hints.</p></div><fieldset><legend class="visually-hidden">Excluded content labels</legend>{#each ["adult", "graphic", "political"] as label}<label><input type="checkbox" checked={preferences.blockedLabels.includes(label)} on:change={async (event) => { if (!client) return; const checkbox = event.currentTarget as HTMLInputElement; const previous = preferences; preferences = { ...preferences, blockedLabels: checkbox.checked ? [...preferences.blockedLabels, label] : preferences.blockedLabels.filter((item) => item !== label) }; try { preferences = await client.savePreferences(preferences); statusMessage = "Allowances saved."; } catch (error) { preferences = previous; checkbox.checked = previous.blockedLabels.includes(label); statusMessage = error instanceof Error ? error.message : "Allowances could not be saved."; } }} /> {label[0].toUpperCase() + label.slice(1)} content</label>{/each}</fieldset></section>
-            <section><div><p class="section-number">OFFLINE</p><h2>Active edition only</h2><p>The shell and current edition can resume offline. OAuth, exports, and source data never enter the cache.</p></div><p class="connection"><span aria-hidden="true">●</span> Ready for offline resume</p></section>
+            <section><div><p class="section-number">OFFLINE</p><h2>Active edition only</h2><p>The shell and current edition can resume offline. OAuth, exports, and source data never enter the cache.</p></div><p class="connection"><span aria-hidden="true">●</span> {offlineState === "ready" ? "Offline cache active" : offlineState === "checking" ? "Checking offline cache" : "Offline cache unavailable"}</p></section>
             <section><div><p class="section-number">PORTABILITY</p><h2>Your private data</h2><p>Download a validated JSON copy whenever you want.</p></div><button class="button quiet" type="button" on:click={downloadExport}>Export my data</button></section>
             <section class="danger-zone"><div><p class="section-number">RESET</p><h2>Start over carefully</h2><p>Reset learned taste while keeping manual interests, or explicitly erase everything.</p></div><div class="row-actions"><button class="button quiet" type="button" on:click={resetLearnedTaste}>Reset learned taste</button><button class="text-button danger" type="button" on:click={fullReset}>Full reset…</button></div></section>
             <section><div><p class="section-number">SESSION</p><h2>Leave this device</h2></div><button class="button primary" type="button" on:click={signOut}>Sign out</button></section>

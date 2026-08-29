@@ -1,8 +1,9 @@
 <script lang="ts">
-  import type { SafeBlock } from "../contracts";
+  import type { MediaAttachment, SafeBlock } from "../contracts";
   import { safeExternalLinkAttributes } from "./reading";
 
   export let blocks: SafeBlock[] = [];
+  export let media: MediaAttachment[] = [];
   export let skipFirstHeading = false;
 </script>
 
@@ -46,6 +47,31 @@
       {/if}
     {/if}
   {/each}
+
+  {#each media as attachment}
+    <figure class="attachment">
+      {#if attachment.kind === "image"}
+        <img src={attachment.url} alt={attachment.alt ?? ""} loading="lazy" />
+      {:else if attachment.kind === "audio"}
+        <audio
+          aria-label={attachment.alt ?? "Audio attachment"}
+          controls
+          preload="none"
+          src={attachment.url}
+        ></audio>
+      {:else}
+        <video
+          aria-label={attachment.alt ?? "Video attachment"}
+          controls
+          preload="metadata"
+          src={attachment.url}
+        ></video>
+      {/if}
+      {#if attachment.alt && attachment.kind !== "image"}
+        <figcaption>{attachment.alt}</figcaption>
+      {/if}
+    </figure>
+  {/each}
 </div>
 
 <style>
@@ -61,6 +87,7 @@
   figure { max-width: 100%; margin: 2rem 0; }
   img, video { display: block; max-width: 100%; height: auto; }
   audio { width: min(100%, 32rem); }
+  .attachment figcaption { margin-top: 0.55rem; color: var(--muted); }
   .external { font-family: var(--utility); font-size: 0.76rem; }
   .external a { color: var(--ember); text-decoration-thickness: 1px; text-underline-offset: 0.28em; }
 </style>

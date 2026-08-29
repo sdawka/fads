@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  describeDecisionFactor,
   describeControlValue,
   isSafeExternalUrl,
   moveReader,
@@ -12,6 +13,23 @@ describe("reading controls", () => {
     expect(describeControlValue("curiosity", 0)).toBe("familiar ground");
     expect(describeControlValue("curiosity", 64)).toBe("open to detours");
     expect(describeControlValue("energy", 100)).toBe("ready to concentrate");
+  });
+
+  it("describes signed ranking contributions without inventing percentages", () => {
+    expect(
+      describeDecisionFactor({
+        factor: "manual-interest:systems",
+        weight: 0.36,
+        provenance: { source: "manual", observedAt: "2026-08-28T00:00:00.000Z" },
+      }),
+    ).toBe("+0.36 score · manual");
+    expect(
+      describeDecisionFactor({
+        factor: "source-muted",
+        weight: -1,
+        provenance: { source: "policy", observedAt: "2026-08-28T00:00:00.000Z" },
+      }),
+    ).toBe("−1.00 score · policy");
   });
 
   it("stops at the finite end instead of continuing into another edition", () => {

@@ -1,3 +1,5 @@
+import type { DecisionTrace } from "../contracts";
+
 export type ReaderDirection = "previous" | "next";
 
 export interface ReaderPosition {
@@ -13,6 +15,11 @@ const descriptions = {
 export function describeControlValue(control: keyof typeof descriptions, value: number): string {
   const index = value <= 24 ? 0 : value <= 49 ? 1 : value <= 74 ? 2 : 3;
   return descriptions[control][index];
+}
+
+export function describeDecisionFactor(factor: DecisionTrace["factors"][number]): string {
+  const sign = factor.weight < 0 ? "−" : "+";
+  return `${sign}${Math.abs(factor.weight).toFixed(2)} score · ${factor.provenance.source}`;
 }
 
 export function moveReader(

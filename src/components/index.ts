@@ -1,4 +1,5 @@
 export {
+  describeDecisionFactor,
   describeControlValue,
   isSafeExternalUrl,
   moveReader,
