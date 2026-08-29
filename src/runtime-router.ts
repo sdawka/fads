@@ -26,12 +26,12 @@ export function createRuntimeRouter(input: { auth: RuntimeAuth; api: RuntimeApiH
       return publicJson(input.auth.jwks());
     }
     if (path === "/oauth/start") {
-      if (request.method !== "GET") return methodNotAllowed("GET");
-      return input.auth.start(request);
+      if (request.method !== "GET") return withPrivateHeaders(methodNotAllowed("GET"));
+      return withPrivateHeaders(await input.auth.start(request));
     }
     if (path === "/oauth/callback") {
-      if (request.method !== "GET") return methodNotAllowed("GET");
-      return input.auth.callback(request);
+      if (request.method !== "GET") return withPrivateHeaders(methodNotAllowed("GET"));
+      return withPrivateHeaders(await input.auth.callback(request));
     }
     if (!path.startsWith("/api/v1/")) return undefined;
 

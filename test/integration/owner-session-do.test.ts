@@ -32,6 +32,39 @@ describe("OwnerSessionDO", () => {
     await expect(stub.getOAuthState({ key: "state-1" })).resolves.toBeUndefined();
   });
 
+  it("purges expired OAuth state and retains only a bounded set", async () => {
+    const appEnv = env as unknown as AppEnv;
+    const stub = appEnv.OWNER_SESSION.getByName("owner-bounded-state");
+    const now = Date.now();
+    await stub.putOAuthState({ key: "expired", value: { expiresAt: now - 1 } });
+    for (let index = 0; index < 12; index += 1) {
+      await stub.putOAuthState({
+        key: `state-${index}`,
+        value: { expiresAt: now + 60_000 + index },
+      });
+    }
+
+    const states = await runInDurableObject(stub, (_instance, state) =>
+      Array.from(
+        state.storage.sql.exec<{ key: string }>("SELECT key FROM oauth_states ORDER BY key"),
+      ),
+    );
+
+    expect(states).toHaveLength(8);
+    expect(states.map((row) => row.key)).not.toContain("expired");
+  });
+
+  it("rate-limits OAuth starts within a rolling window", async () => {
+    const appEnv = env as unknown as AppEnv;
+    const stub = appEnv.OWNER_SESSION.getByName("owner-oauth-rate");
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await expect(stub.tryStartOAuth({ now: 1_000 })).resolves.toBe(true);
+    }
+    await expect(stub.tryStartOAuth({ now: 1_000 })).resolves.toBe(false);
+    await expect(stub.tryStartOAuth({ now: 61_001 })).resolves.toBe(true);
+  });
+
   it("drops expired hashed app sessions without exposing a bearer token", async () => {
     const appEnv = env as unknown as AppEnv;
     const stub = appEnv.OWNER_SESSION.getByName("owner");

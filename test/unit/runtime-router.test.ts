@@ -38,6 +38,16 @@ describe("runtime route boundary", () => {
     await expect(response?.json()).resolves.toEqual({ keys: [{ kty: "EC", x: "public" }] });
   });
 
+  it("marks OAuth flow responses as private and non-cacheable", async () => {
+    const { route } = createHarness();
+
+    const start = await route(new Request("https://fads.cc/oauth/start"));
+    const callback = await route(new Request("https://fads.cc/oauth/callback?code=one"));
+
+    expect(start?.headers.get("cache-control")).toBe("private, no-store");
+    expect(callback?.headers.get("cache-control")).toBe("private, no-store");
+  });
+
   it("reports signed-out session state privately", async () => {
     const { route } = createHarness(false);
 

@@ -11,6 +11,7 @@ class MemoryOwnerSession {
   readonly states = new Map<string, unknown>();
   readonly oauth = new Map<string, unknown>();
   readonly refreshLocks = new Map<string, string>();
+  oauthStarts = 0;
 
   async createAppSession(input: {
     tokenHash: string;
@@ -50,6 +51,11 @@ class MemoryOwnerSession {
 
   async deleteOAuthState(input: { key: string }) {
     this.states.delete(input.key);
+  }
+
+  async tryStartOAuth() {
+    this.oauthStarts += 1;
+    return this.oauthStarts <= 6;
   }
 
   async getOAuthSession(input: { did: string }) {
@@ -119,7 +125,44 @@ describe("AT Protocol owner authentication", () => {
 
     expect(metadata.client_id).toBe("https://fads.example/oauth/client-metadata.json");
     expect(metadata.redirect_uris).toEqual(["https://fads.example/oauth/callback"]);
+    expect(metadata.dpop_bound_access_tokens).toBe(true);
+    expect(metadata.scope).toBe(
+      [
+        "atproto",
+        "rpc?aud=did:web:api.bsky.app%23bsky_appview&lxm=app.bsky.feed.getTimeline&lxm=app.bsky.feed.getFeed&lxm=app.bsky.feed.getPosts&lxm=app.bsky.graph.getFollows&lxm=app.bsky.feed.getActorLikes&lxm=app.bsky.graph.getActorStarterPacks&lxm=app.bsky.feed.getAuthorFeed",
+      ].join(" "),
+    );
+    expect(metadata.scope).not.toContain("transition:generic");
     expect(jwks).toEqual({ keys: [{ kty: "EC", crv: "P-256", x: "x", y: "y", kid: "main" }] });
+  });
+
+  it("rate-limits OAuth starts before contacting the authorization server", async () => {
+    const authorize = async () => ({
+      url: new URL("https://pds.example/authorize"),
+      stateId: "state",
+    });
+    const session = new MemoryOwnerSession();
+    const auth = createAtprotoAuth({
+      ownerDid,
+      origin: "https://fads.example",
+      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      session,
+      oauthFactory: () => ({
+        metadata: {},
+        authorize,
+        callback: async () => ({ session: { did: ownerDid }, state: {} }) as never,
+        restore: async () => ({ did: ownerDid }) as never,
+        revoke: async () => undefined,
+      }),
+    });
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      expect((await auth.start()).status).toBe(302);
+    }
+    const limited = await auth.start();
+
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("60");
   });
 
   it("projects only public JWK members from confidential EC, OKP, and RSA keys", async () => {
@@ -329,6 +372,7 @@ describe("AT Protocol owner authentication", () => {
     const callback = await auth.callback(
       new Request("https://fads.example/oauth/callback?code=code&state=state"),
     );
+    await session.putOAuthSession({ did: ownerDid, value: { refresh_token: "local-secret" } });
     const cookie = callback.headers.get("set-cookie")?.split(";")[0] ?? "";
 
     const response = await auth.logout(
@@ -342,6 +386,7 @@ describe("AT Protocol owner authentication", () => {
     await expect(
       auth.inspect(new Request("https://fads.example", { headers: { cookie } })),
     ).resolves.toBeUndefined();
+    expect(session.oauth.has(ownerDid)).toBe(false);
   });
 
   it("extends an active session's bounded idle expiry without extending its absolute expiry", async () => {

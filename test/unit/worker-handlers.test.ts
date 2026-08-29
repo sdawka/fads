@@ -109,7 +109,7 @@ describe("Worker ingestion handlers", () => {
     expect(inputs.slice(0, 4).every((input) => input.ack.mock.calls.length === 1)).toBe(true);
     expect(inputs.slice(0, 4).every((input) => input.retry.mock.calls.length === 0)).toBe(true);
     expect(inputs[4].ack).not.toHaveBeenCalled();
-    expect(inputs[4].retry).toHaveBeenCalledOnce();
+    expect(inputs[4].retry).toHaveBeenCalledWith({ delaySeconds: 60 });
   });
 
   it("enqueues only planned stale source messages and disables schedule retries", async () => {
@@ -151,7 +151,7 @@ describe("Worker ingestion handlers", () => {
 
     await handlers.queue({ messages: [input] } as never, {} as never);
 
-    expect(input.retry).toHaveBeenCalledOnce();
+    expect(input.retry).toHaveBeenCalledWith({ delaySeconds: 60 });
     expect(input.ack).not.toHaveBeenCalled();
   });
 });

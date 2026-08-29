@@ -211,6 +211,7 @@ function repository(): ApiRepository {
       ownerId === OWNER && editionId === "edition:one" && contentId === "item:one",
     claimSyncWork: async () => ({ status: "claimed", claimToken: "sync" }),
     completeSyncWork: async () => true,
+    releaseSyncWork: async () => true,
   };
 }
 
@@ -339,6 +340,66 @@ describe("owner API router", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toEqual({ sources: [source()] });
+  });
+
+  it("forwards the logout cookie deletion through the private API", async () => {
+    const handler = createOwnerApiHandler(
+      dependencies({
+        logout: async () =>
+          new Response(null, {
+            status: 204,
+            headers: {
+              "set-cookie":
+                "fads_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+            },
+          }),
+      }),
+    );
+
+    const response = await handler(
+      new Request("https://fads.cc/api/v1/logout", {
+        method: "POST",
+        headers: { "idempotency-key": "logout" },
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("set-cookie")).toBe(
+      "fads_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+    );
+  });
+
+  it("revokes authentication and clears the cookie after a full reset", async () => {
+    let fullReset = false;
+    let loggedOut = false;
+    const repo = repository();
+    repo.resetOwnerData = async (_ownerId, full) => {
+      fullReset = full;
+    };
+    const handler = createOwnerApiHandler(
+      dependencies({
+        repository: repo,
+        logout: async () => {
+          loggedOut = true;
+          return new Response(null, {
+            status: 204,
+            headers: { "set-cookie": "fads_session=; Path=/; Max-Age=0" },
+          });
+        },
+      }),
+    );
+
+    const response = await handler(
+      new Request("https://fads.cc/api/v1/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "full-reset" },
+        body: JSON.stringify({ full: true, confirmation: "DELETE ALL PRIVATE DATA" }),
+      }),
+    );
+
+    expect(fullReset).toBe(true);
+    expect(loggedOut).toBe(true);
+    expect(response.headers.get("set-cookie")).toBe("fads_session=; Path=/; Max-Age=0");
   });
 
   it("replays an idempotent source mutation and rejects key reuse with another body", async () => {

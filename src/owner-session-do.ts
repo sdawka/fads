@@ -2,6 +2,9 @@ import { DurableObject } from "cloudflare:workers";
 import type { AppEnv } from "./app-env";
 
 const REFRESH_LEASE_MS = 5 * 60_000;
+const OAUTH_STATE_LIMIT = 8;
+const OAUTH_START_WINDOW_MS = 60_000;
+const OAUTH_START_LIMIT = 6;
 
 export class OwnerSessionDO extends DurableObject<AppEnv> {
   constructor(ctx: DurableObjectState, env: AppEnv) {
@@ -22,6 +25,9 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
       this.ctx.storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS refresh_locks (name TEXT PRIMARY KEY, holder TEXT NOT NULL, expires_at INTEGER NOT NULL)",
       );
+      this.ctx.storage.sql.exec(
+        "CREATE TABLE IF NOT EXISTS oauth_start_rate (name TEXT PRIMARY KEY, window_started_at INTEGER NOT NULL, count INTEGER NOT NULL)",
+      );
       return Promise.resolve();
     });
   }
@@ -40,7 +46,32 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
       value,
       expiresAt,
     );
+    this.ctx.storage.sql.exec("DELETE FROM oauth_states WHERE expires_at <= ?", Date.now());
+    this.ctx.storage.sql.exec(
+      "DELETE FROM oauth_states WHERE key IN (SELECT key FROM oauth_states ORDER BY expires_at DESC, key DESC LIMIT -1 OFFSET ?)",
+      OAUTH_STATE_LIMIT,
+    );
     return Promise.resolve();
+  }
+
+  tryStartOAuth(input: { now: number }): Promise<boolean> {
+    const row = Array.from(
+      this.ctx.storage.sql.exec<{ window_started_at: number; count: number }>(
+        "SELECT window_started_at, count FROM oauth_start_rate WHERE name = 'start'",
+      ),
+    )[0];
+    if (!row || row.window_started_at + OAUTH_START_WINDOW_MS <= input.now) {
+      this.ctx.storage.sql.exec(
+        "INSERT OR REPLACE INTO oauth_start_rate (name, window_started_at, count) VALUES ('start', ?, 1)",
+        input.now,
+      );
+      return Promise.resolve(true);
+    }
+    if (row.count >= OAUTH_START_LIMIT) return Promise.resolve(false);
+    this.ctx.storage.sql.exec(
+      "UPDATE oauth_start_rate SET count = count + 1 WHERE name = 'start'",
+    );
+    return Promise.resolve(true);
   }
 
   getOAuthState(input: { key: string }): Promise<unknown> {

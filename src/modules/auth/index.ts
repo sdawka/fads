@@ -1,5 +1,6 @@
 import {
   OAuthClient,
+  scope as oauthScope,
   type AuthorizationResult,
   type CallbackResult,
   type ClientAssertionPrivateJwk,
@@ -21,6 +22,15 @@ const APP_COOKIE = "fads_session";
 const IDLE_MS = 8 * 60 * 60 * 1000;
 const ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000;
 const REFRESH_LEASE_RENEW_MS = 15_000;
+const READ_ONLY_RPC_METHODS = [
+  "app.bsky.feed.getTimeline",
+  "app.bsky.feed.getFeed",
+  "app.bsky.feed.getPosts",
+  "app.bsky.graph.getFollows",
+  "app.bsky.feed.getActorLikes",
+  "app.bsky.graph.getActorStarterPacks",
+  "app.bsky.feed.getAuthorFeed",
+] as const;
 
 export interface OwnerSessionStore {
   createAppSession(input: {
@@ -35,6 +45,7 @@ export interface OwnerSessionStore {
   getOAuthState(input: { key: string }): Promise<unknown>;
   putOAuthState(input: { key: string; value: unknown }): Promise<void>;
   deleteOAuthState(input: { key: string }): Promise<void>;
+  tryStartOAuth(input: { now: number }): Promise<boolean>;
   getOAuthSession(input: { did: string }): Promise<unknown>;
   putOAuthSession(input: { did: string; value: unknown }): Promise<void>;
   deleteOAuthSession(input: { did: string }): Promise<void>;
@@ -79,7 +90,14 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
   const metadata = {
     client_id: `${origin}/oauth/client-metadata.json`,
     redirect_uris: [`${origin}/oauth/callback`],
-    scope: "atproto transition:generic",
+    scope: [
+      "atproto",
+      oauthScope.rpc({
+        lxm: [...READ_ONLY_RPC_METHODS],
+        aud: "did:web:api.bsky.app#bsky_appview",
+      }),
+    ].join(" "),
+    dpop_bound_access_tokens: true,
     jwks_uri: `${origin}/oauth/jwks.json`,
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
@@ -99,6 +117,12 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
     clientMetadata: () => metadata,
     jwks: () => ({ keys: options.privateJwks.map(publicJwk) }),
     async start(): Promise<Response> {
+      if (!(await options.session.tryStartOAuth({ now: now() }))) {
+        return new Response("Too many OAuth attempts", {
+          status: 429,
+          headers: { "retry-after": "60" },
+        });
+      }
       const authorization = await getOAuth().authorize({
         target: { type: "account", identifier: options.ownerDid as ActorIdentifier },
       });
@@ -167,10 +191,15 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
       const app = await this.inspect(request);
       if (token)
         await options.session.deleteAppSession({ tokenHash: await hashAppSessionToken(token) });
-      if (app)
-        await getOAuth()
-          .revoke(app.did)
-          .catch(() => undefined);
+      if (app) {
+        try {
+          await getOAuth().revoke(app.did);
+        } catch {
+          // Clearing the local session is mandatory even when the PDS cannot be reached.
+        } finally {
+          await options.session.deleteOAuthSession({ did: app.did });
+        }
+      }
       return new Response(null, { status: 204, headers: { "set-cookie": clearCookie() } });
     },
   };

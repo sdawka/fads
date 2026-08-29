@@ -71,7 +71,7 @@ export function createWorkerHandlers(dependencies: WorkerHandlerDependencies) {
         const result = await consumeSourceSyncMessage(message.body, (body) =>
           dependencies.syncSource(env, body),
         );
-        if (result.outcome === "retry") message.retry();
+        if (result.outcome === "retry") message.retry({ delaySeconds: 60 });
         else message.ack();
       }
     },
@@ -154,10 +154,9 @@ const productionDependencies: WorkerHandlerDependencies = {
       return "processed";
     } catch (error) {
       const normalized = normalizeSyncError(error);
-      if (
-        normalized.status !== 429 &&
-        (normalized.status === undefined || normalized.status < 500)
-      ) {
+      const transient =
+        normalized.status === 429 || normalized.status === undefined || normalized.status >= 500;
+      if (!transient) {
         const completed = await repository.completeSyncWork({
           ownerId: message.ownerId,
           sourceId: message.sourceId,
@@ -168,11 +167,22 @@ const productionDependencies: WorkerHandlerDependencies = {
         });
         if (!completed) throw statusError(503, "Source synchronization claim expired");
       }
-      await repository.setSourceStatus(message.ownerId, message.sourceId, {
-        status: "error",
-        lastError: normalized.message.slice(0, 500),
-        updatedAt: new Date().toISOString(),
-      });
+      try {
+        await repository.setSourceStatus(message.ownerId, message.sourceId, {
+          status: "error",
+          lastError: normalized.message.slice(0, 500),
+          updatedAt: new Date().toISOString(),
+        });
+      } finally {
+        if (transient) {
+          await repository.releaseSyncWork({
+            ownerId: message.ownerId,
+            sourceId: message.sourceId,
+            fingerprint: message.workId,
+            claimToken: claim.claimToken,
+          });
+        }
+      }
       throw normalized;
     }
   },

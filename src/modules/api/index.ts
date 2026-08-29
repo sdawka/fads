@@ -40,6 +40,7 @@ import type { OwnerDataRepository, OwnerSource, OwnerStorageHardeningRepository 
 
 const API_PREFIX = "/api/v1";
 const DAY_MS = 24 * 60 * 60 * 1000;
+const IDEMPOTENCY_PENDING_LEASE_MS = 2 * 60 * 1000;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 type ApiRepository = OwnerDataRepository & OwnerStorageHardeningRepository;
@@ -397,7 +398,8 @@ export function createOwnerApiHandler(dependencies: OwnerApiDependencies) {
         const scope = `${request.method} ${url.pathname}`;
         const requestHash = await digest(`${scope}\n${raw}`);
         const claimedAt = now();
-        const expiresAt = new Date(new Date(claimedAt).getTime() + DAY_MS).toISOString();
+        const claimedAtMs = new Date(claimedAt).getTime();
+        const expiresAt = new Date(claimedAtMs + DAY_MS).toISOString();
         const claim = await dependencies.repository.claimIdempotency({
           ownerId: owner.did,
           scope,
@@ -405,6 +407,9 @@ export function createOwnerApiHandler(dependencies: OwnerApiDependencies) {
           requestHash,
           now: claimedAt,
           expiresAt,
+          pendingReclaimBefore: new Date(
+            claimedAtMs - IDEMPOTENCY_PENDING_LEASE_MS,
+          ).toISOString(),
           claimToken: crypto.randomUUID(),
         });
         if (claim.status === "conflict") {
@@ -543,7 +548,9 @@ async function route(input: {
     parseOptionalEmpty(raw);
     const result = await dependencies.logout(request);
     if (result.status !== 204) throw new ContractFailure("Invalid logout response");
-    return withPrivateHeaders(new Response(null, { status: 204 }));
+    return withPrivateHeaders(
+      new Response(null, { status: 204, headers: new Headers(result.headers) }),
+    );
   }
 
   if (match.name === "sources" && request.method === "GET") {
@@ -844,6 +851,13 @@ async function route(input: {
       body.full,
       body.full ? idempotencySelector : undefined,
     );
+    if (body.full) {
+      const result = await dependencies.logout(request);
+      if (result.status !== 204) throw new ContractFailure("Invalid logout response");
+      return withPrivateHeaders(
+        new Response(null, { status: 204, headers: new Headers(result.headers) }),
+      );
+    }
     return withPrivateHeaders(new Response(null, { status: 204 }));
   }
   throw new ContractFailure("Unhandled API route");
