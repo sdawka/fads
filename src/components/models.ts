@@ -1,4 +1,11 @@
-import type { ContentEnvelope, RecommendationSlate } from "../contracts";
+import type {
+  ContentEnvelope,
+  InterestSuggestion,
+  ManualInterest,
+  OwnerPreferences,
+  RecommendationSlate,
+  ApiSource,
+} from "../contracts";
 
 export type Surface = "edition" | "keeps" | "sources" | "garden" | "settings";
 export type FeedbackKind =
@@ -16,6 +23,19 @@ export interface ActiveEditionView {
   completed: boolean;
 }
 
+/** The API's keep shape is currently owned by storage, pending a shared contract schema. */
+export interface KeepRecord {
+  ownerId: string;
+  contentId: string;
+  keptAt: string;
+}
+
+export interface OwnerExport {
+  ownerId: string;
+  exportedAt: string;
+  data: Record<string, unknown>;
+}
+
 export interface FadsUiClient {
   session(): Promise<SessionView>;
   activeEdition(): Promise<ActiveEditionView | undefined>;
@@ -28,4 +48,38 @@ export interface FadsUiClient {
     sourceId: string;
     kind: FeedbackKind;
   }): Promise<void>;
+  listKeeps(): Promise<KeepRecord[]>;
+  addKeep(contentId: string): Promise<KeepRecord>;
+  removeKeep(contentId: string): Promise<void>;
+  listSources(): Promise<ApiSource[]>;
+  addSource(input: {
+    adapter: "rss" | "atproto";
+    displayName: string;
+    url?: string;
+    config?: Record<string, unknown>;
+  }): Promise<ApiSource>;
+  removeSource(sourceId: string): Promise<void>;
+  refreshSource(sourceId: string): Promise<ApiSource>;
+  muteSource(
+    sourceId: string,
+    muted: boolean,
+    current?: OwnerPreferences,
+  ): Promise<OwnerPreferences>;
+  importOpml(
+    opml: string,
+  ): Promise<{ sources: ApiSource[]; rejected: Array<{ url: string; reason: string }> }>;
+  exportOpml(): Promise<string>;
+  listInterests(): Promise<ManualInterest[]>;
+  addInterest(value: string): Promise<ManualInterest>;
+  removeInterest(interestId: string): Promise<void>;
+  listSuggestions(): Promise<InterestSuggestion[]>;
+  decideSuggestion(
+    suggestionId: string,
+    decision: "confirm" | "reject",
+  ): Promise<InterestSuggestion>;
+  getPreferences(): Promise<OwnerPreferences>;
+  savePreferences(preferences: OwnerPreferences): Promise<OwnerPreferences>;
+  exportData(): Promise<OwnerExport>;
+  reset(full?: boolean): Promise<void>;
+  logout(): Promise<void>;
 }

@@ -2,8 +2,19 @@
   import { onMount } from "svelte";
 
   import type { ContentEnvelope, FramedRecommendation } from "../contracts";
+  import {
+    clearOfflineState,
+    registerOfflineServiceWorker,
+  } from "../modules/offline";
   import { createBrowserUiClient } from "./api-client";
-  import type { ActiveEditionView, FadsUiClient, FeedbackKind, Surface } from "./models";
+  import type {
+    ActiveEditionView,
+    FadsUiClient,
+    FeedbackKind,
+    KeepRecord,
+    OwnerExport,
+    Surface,
+  } from "./models";
   import { describeControlValue, moveReader } from "./reading";
   import SafeBlocks from "./SafeBlocks.svelte";
 
@@ -19,11 +30,20 @@
   let creating = false;
   let atEnd = false;
   let traceExpanded = false;
-  let kept = new Set<string>();
-  let manualInterests = ["urban ecology", "tools for thought"];
-  let suggestions = ["vernacular architecture", "small press publishing"];
-  let rssSources: Array<{ name: string; url: string; muted: boolean }> = [];
+  let keeps: KeepRecord[] = [];
+  let manualInterests: Awaited<ReturnType<FadsUiClient["listInterests"]>> = [];
+  let suggestions: Awaited<ReturnType<FadsUiClient["listSuggestions"]>> = [];
+  let rssSources: Awaited<ReturnType<FadsUiClient["listSources"]>> = [];
+  let preferences = { blockedLabels: [] as string[], mutedSourceIds: [] as string[] };
   let rssUrl = "";
+  let managementLoading = false;
+  let offlineRegistration: ServiceWorkerRegistration | undefined;
+
+  let offlineRegistrationPromise: Promise<ServiceWorkerRegistration | undefined> | undefined;
+  function ensureOfflineRegistration() {
+    offlineRegistrationPromise ??= registerOfflineServiceWorker().catch(() => undefined);
+    return offlineRegistrationPromise;
+  }
 
   const navigation: Array<{ href: string; label: string; surface: Surface }> = [
     { href: "/", label: "Edition", surface: "edition" },
@@ -40,6 +60,7 @@
   $: title = item?.blocks.find((block) => block.kind === "heading")?.text ?? "Untitled";
 
   onMount(async () => {
+    offlineRegistration = await ensureOfflineRegistration();
     const uiClient = client ?? createBrowserUiClient();
     client = uiClient;
     try {
@@ -48,12 +69,38 @@
       if (session === "authenticated" && activeSurface === "edition") {
         edition = await uiClient.activeEdition();
         atEnd = edition?.completed ?? false;
+      } else if (session === "authenticated") {
+        await loadSurface(uiClient);
       }
     } catch (error) {
       session = "signed-out";
       loadError = error instanceof Error && error.message === "Your session expired." ? error.message : "";
     }
   });
+
+  async function loadSurface(uiClient: FadsUiClient) {
+    managementLoading = true;
+    try {
+      if (activeSurface === "keeps") keeps = await uiClient.listKeeps();
+      if (activeSurface === "sources") {
+        [rssSources, preferences] = await Promise.all([
+          uiClient.listSources(),
+          uiClient.getPreferences(),
+        ]);
+      }
+      if (activeSurface === "garden") {
+        [manualInterests, suggestions] = await Promise.all([
+          uiClient.listInterests(),
+          uiClient.listSuggestions(),
+        ]);
+      }
+      if (activeSurface === "settings") preferences = await uiClient.getPreferences();
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "This surface could not be loaded.";
+    } finally {
+      managementLoading = false;
+    }
+  }
 
   async function makeEdition() {
     if (!client || creating) return;
@@ -84,19 +131,22 @@
       }
       return;
     }
+    const previousPosition = edition.position;
     edition = { ...edition, position: next.position };
     statusMessage = `Item ${next.position + 1} of ${total}.`;
     try {
       await client.setProgress(edition.edition.id, next.position);
     } catch (error) {
+      edition = { ...edition, position: previousPosition };
       statusMessage = error instanceof Error ? error.message : "Progress will be saved when online.";
     }
   }
 
   async function react(kind: FeedbackKind) {
     if (!edition || !item || !client) return;
+    const wasKept = keeps.some((keep) => keep.contentId === item.id);
     if (kind === "keep") {
-      kept = new Set(kept).add(item.id);
+      if (!wasKept) keeps = [{ ownerId: "", contentId: item.id, keptAt: new Date().toISOString() }, ...keeps];
     }
     statusMessage = kind === "keep" ? "Kept for later." : "Noted. Your taste changed a little.";
     try {
@@ -106,32 +156,186 @@
         sourceId: item.sourceId,
         kind,
       });
+      if (kind === "keep" && !wasKept) {
+        const saved = await client.addKeep(item.id);
+        keeps = keeps.map((keep) => (keep.contentId === item.id ? saved : keep));
+      }
     } catch (error) {
+      if (kind === "keep" && !wasKept) keeps = keeps.filter((keep) => keep.contentId !== item.id);
       statusMessage = error instanceof Error ? error.message : "Feedback will be sent when online.";
     }
   }
 
-  function addSource() {
+  async function addSource() {
+    if (!client) return;
     const value = rssUrl.trim();
     if (!value) return;
-    rssSources = [...rssSources, { name: new URL(value).hostname, url: value, muted: false }];
-    rssUrl = "";
-    statusMessage = "RSS source added. Refresh queued.";
+    try {
+      const added = await client.addSource({ adapter: "rss", displayName: new URL(value).hostname, url: value });
+      rssSources = [added, ...rssSources];
+      rssUrl = "";
+      statusMessage = "RSS source added.";
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "The source could not be added.";
+    }
   }
 
-  function addInterest(event: SubmitEvent) {
+  async function addInterest(event: SubmitEvent) {
+    if (!client) return;
     const form = event.currentTarget as HTMLFormElement;
     const input = new FormData(form).get("interest")?.toString().trim();
-    if (!input || manualInterests.includes(input)) return;
-    manualInterests = [...manualInterests, input];
-    form.reset();
-    statusMessage = `${input} added to your garden.`;
+    if (!input || manualInterests.some((interest) => interest.value === input)) return;
+    try {
+      const added = await client.addInterest(input);
+      manualInterests = [...manualInterests, added];
+      form.reset();
+      statusMessage = `${input} added to your garden.`;
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "The interest could not be added.";
+    }
   }
 
-  function decideSuggestion(value: string, confirm: boolean) {
-    suggestions = suggestions.filter((suggestion) => suggestion !== value);
-    if (confirm && !manualInterests.includes(value)) manualInterests = [...manualInterests, value];
-    statusMessage = confirm ? `${value} confirmed.` : `${value} dismissed.`;
+  async function decideSuggestion(suggestion: (typeof suggestions)[number], decision: "confirm" | "reject") {
+    if (!client) return;
+    suggestions = suggestions.filter((item) => item.id !== suggestion.id);
+    try {
+      await client.decideSuggestion(suggestion.id, decision);
+      statusMessage = decision === "confirm" ? `${suggestion.value} confirmed.` : `${suggestion.value} dismissed.`;
+    } catch (error) {
+      suggestions = [...suggestions, suggestion];
+      statusMessage = error instanceof Error ? error.message : "The suggestion could not be updated.";
+    }
+  }
+
+  async function removeKeep(contentId: string) {
+    if (!client) return;
+    const previous = keeps;
+    keeps = keeps.filter((keep) => keep.contentId !== contentId);
+    try {
+      await client.removeKeep(contentId);
+      statusMessage = "Keep removed.";
+    } catch (error) {
+      keeps = previous;
+      statusMessage = error instanceof Error ? error.message : "The keep could not be removed.";
+    }
+  }
+
+  async function removeSource(sourceId: string) {
+    if (!client) return;
+    const previous = rssSources;
+    rssSources = rssSources.filter((source) => source.id !== sourceId);
+    try {
+      await client.removeSource(sourceId);
+      statusMessage = "Source removed.";
+    } catch (error) {
+      rssSources = previous;
+      statusMessage = error instanceof Error ? error.message : "The source could not be removed.";
+    }
+  }
+
+  async function refreshSource(sourceId: string) {
+    if (!client) return;
+    try {
+      const refreshed = await client.refreshSource(sourceId);
+      rssSources = rssSources.map((source) => source.id === sourceId ? refreshed : source);
+      statusMessage = "Source refresh queued.";
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "The source could not be refreshed.";
+    }
+  }
+
+  async function toggleSourceMute(sourceId: string) {
+    if (!client) return;
+    const previous = preferences;
+    const muted = preferences.mutedSourceIds.includes(sourceId);
+    preferences = { ...preferences, mutedSourceIds: muted ? preferences.mutedSourceIds.filter((id) => id !== sourceId) : [...preferences.mutedSourceIds, sourceId] };
+    try {
+      preferences = await client.muteSource(sourceId, !muted, preferences);
+      statusMessage = muted ? "Source unmuted." : "Source muted.";
+    } catch (error) {
+      preferences = previous;
+      statusMessage = error instanceof Error ? error.message : "The source mute could not be saved.";
+    }
+  }
+
+  async function removeInterest(id: string) {
+    if (!client) return;
+    const previous = manualInterests;
+    manualInterests = manualInterests.filter((interest) => interest.id !== id);
+    try {
+      await client.removeInterest(id);
+      statusMessage = "Interest removed.";
+    } catch (error) {
+      manualInterests = previous;
+      statusMessage = error instanceof Error ? error.message : "The interest could not be removed.";
+    }
+  }
+
+  async function importOpmlFile(event: Event) {
+    if (!client) return;
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const imported = await client.importOpml(await file.text());
+      rssSources = [...imported.sources, ...rssSources];
+      statusMessage = `${imported.sources.length} source${imported.sources.length === 1 ? "" : "s"} imported.`;
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "The OPML file could not be imported.";
+    } finally {
+      input.value = "";
+    }
+  }
+
+  async function downloadExport() {
+    if (!client) return;
+    try {
+      const exported: OwnerExport = await client.exportData();
+      const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "fads-private-export.json";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      statusMessage = "Private data exported.";
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "The export could not be downloaded.";
+    }
+  }
+
+  async function resetLearnedTaste() {
+    if (!client) return;
+    try {
+      await client.reset(false);
+      statusMessage = "Learned taste reset. Your explicit interests remain.";
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "Learned taste could not be reset.";
+    }
+  }
+
+  async function fullReset() {
+    if (!client || !window.confirm("Erase all private f.ads data? This cannot be undone.")) return;
+    try {
+      await client.reset(true);
+      await clearOfflineState(offlineRegistration);
+      statusMessage = "All private data was erased.";
+      window.location.assign("/");
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "Full reset could not be completed.";
+    }
+  }
+
+  async function signOut() {
+    if (!client) return;
+    try {
+      await client.logout();
+      await clearOfflineState(offlineRegistration);
+      session = "signed-out";
+      statusMessage = "Signed out.";
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "Could not sign out.";
+    }
   }
 
   function formatDate(value: string): string {
@@ -288,27 +492,30 @@
       {:else if activeSurface === "keeps"}
         <section class="library-surface" aria-labelledby="keeps-title">
           <header><p class="eyebrow">YOUR MARGINS</p><h1 id="keeps-title">Keeps</h1><p>Things worth returning to, newest first.</p></header>
-          {#if kept.size === 0}
+          {#if managementLoading}
+            <p class="empty-note" role="status">Loading your keeps…</p>
+          {:else if keeps.length === 0}
             <div class="empty-note"><p>Nothing kept yet.</p><a href="/">Open an edition and keep what stays with you.</a></div>
           {:else}
-            <ol class="keep-list">{#each [...kept] as contentId}<li><span>RECENT</span><strong>{contentId}</strong><button type="button" on:click={() => { const next = new Set(kept); next.delete(contentId); kept = next; }}>Remove</button></li>{/each}</ol>
+            <ol class="keep-list">{#each keeps as keep}<li><span>{formatDate(keep.keptAt)}</span><strong>{keep.contentId}</strong><button type="button" on:click={() => removeKeep(keep.contentId)}>Remove</button></li>{/each}</ol>
           {/if}
         </section>
       {:else if activeSurface === "sources"}
         <section class="management-surface" aria-labelledby="sources-title">
           <header><p class="eyebrow">WHAT MAY ENTER</p><h1 id="sources-title">Sources</h1><p>Your source list is private. A source must be allowed before it can appear.</p></header>
+          {#if managementLoading}<p role="status">Loading your sources…</p>{/if}
           <div class="management-grid">
-            <section aria-labelledby="atproto-title"><p class="section-number">01 · SOCIAL</p><h2 id="atproto-title">ATProto</h2><p class="connection"><span aria-hidden="true">●</span> Connected as owner</p><div class="row-actions"><button class="button quiet" type="button">Refresh now</button><button class="text-button" type="button">Disconnect</button></div></section>
-            <section aria-labelledby="rss-title"><p class="section-number">02 · PUBLICATIONS</p><h2 id="rss-title">RSS</h2><form on:submit|preventDefault={addSource}><label for="rss-url">Feed URL</label><div class="inline-field"><input id="rss-url" type="url" required placeholder="https://example.com/feed.xml" bind:value={rssUrl} /><button class="button primary" type="submit">Add source</button></div></form><div class="row-actions"><label class="button quiet" for="opml-file">Import OPML</label><input class="visually-hidden" id="opml-file" type="file" accept=".opml,.xml,text/xml" /><a class="text-button" href="/api/v1/sources.opml">Export OPML</a></div></section>
+            <section aria-labelledby="atproto-title"><p class="section-number">01 · SOCIAL</p><h2 id="atproto-title">ATProto</h2><p class="connection"><span aria-hidden="true">●</span> Connected as owner</p><p class="muted-note">Your owner connection is managed by ATProto OAuth.</p></section>
+            <section aria-labelledby="rss-title"><p class="section-number">02 · PUBLICATIONS</p><h2 id="rss-title">RSS</h2><form on:submit|preventDefault={addSource}><label for="rss-url">Feed URL</label><div class="inline-field"><input id="rss-url" type="url" required placeholder="https://example.com/feed.xml" bind:value={rssUrl} /><button class="button primary" type="submit">Add source</button></div></form><div class="row-actions"><label class="button quiet" for="opml-file">Import OPML</label><input class="visually-hidden" id="opml-file" type="file" accept=".opml,.xml,text/xml" on:change={importOpmlFile} /><button class="text-button" type="button" on:click={async () => { if (!client) return; try { const opml = await client.exportOpml(); const blob = new Blob([opml], { type: "text/x-opml" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "fads-sources.opml"; anchor.click(); URL.revokeObjectURL(url); statusMessage = "OPML exported."; } catch (error) { statusMessage = error instanceof Error ? error.message : "OPML export failed."; } }}>Export OPML</button></div></section>
           </div>
-          {#if rssSources.length}<ul class="source-list">{#each rssSources as source}<li><div><strong>{source.name}</strong><small>{source.url}</small></div><span>Refresh queued</span><button type="button" on:click={() => source.muted = !source.muted}>{source.muted ? "Unmute" : "Mute"}</button><button type="button" on:click={() => rssSources = rssSources.filter((item) => item !== source)}>Remove</button></li>{/each}</ul>{/if}
+          {#if rssSources.length}<ul class="source-list">{#each rssSources as source}<li><div><strong>{source.displayName}</strong><small>{source.url ?? "ATProto"}</small></div><span>{source.status === "error" ? source.lastError : source.status}</span><button type="button" on:click={() => refreshSource(source.id)}>Refresh</button><button type="button" on:click={() => toggleSourceMute(source.id)}>{preferences.mutedSourceIds.includes(source.id) ? "Unmute" : "Mute"}</button><button type="button" on:click={() => removeSource(source.id)}>Remove</button></li>{/each}</ul>{/if}
         </section>
       {:else if activeSurface === "garden"}
         <section class="management-surface" aria-labelledby="garden-title">
           <header><p class="eyebrow">TASTE, IN PLAIN SIGHT</p><h1 id="garden-title">Garden</h1><p>Interests you name outrank guesses. Suggestions wait for your say.</p></header>
           <div class="management-grid garden-grid">
-            <section aria-labelledby="manual-title"><p class="section-number">ROOTED</p><h2 id="manual-title">Your interests</h2><ul class="tag-list">{#each manualInterests as interest}<li><span>{interest}</span><button type="button" aria-label={`Remove ${interest}`} on:click={() => manualInterests = manualInterests.filter((item) => item !== interest)}>×</button></li>{/each}</ul><form class="inline-field" on:submit|preventDefault={addInterest}><label class="visually-hidden" for="interest">New interest</label><input id="interest" name="interest" required placeholder="Add an interest" /><button class="button primary" type="submit">Add</button></form></section>
-            <section aria-labelledby="suggestions-title"><p class="section-number">WAITING FOR YOU</p><h2 id="suggestions-title">Suggestions</h2>{#if suggestions.length}<ul class="suggestion-list">{#each suggestions as suggestion}<li><span><strong>{suggestion}</strong><small>Seen across 3 allowed sources</small></span><button type="button" aria-label={`Confirm ${suggestion}`} on:click={() => decideSuggestion(suggestion, true)}>Confirm</button><button type="button" aria-label={`Reject ${suggestion}`} on:click={() => decideSuggestion(suggestion, false)}>Dismiss</button></li>{/each}</ul>{:else}<p>Every suggestion has been decided.</p>{/if}</section>
+            <section aria-labelledby="manual-title"><p class="section-number">ROOTED</p><h2 id="manual-title">Your interests</h2>{#if managementLoading}<p role="status">Loading your garden…</p>{/if}<ul class="tag-list">{#each manualInterests as interest}<li><span>{interest.value}</span><button type="button" aria-label={`Remove ${interest.value}`} on:click={() => removeInterest(interest.id)}>×</button></li>{/each}</ul><form class="inline-field" on:submit|preventDefault={addInterest}><label class="visually-hidden" for="interest">New interest</label><input id="interest" name="interest" required placeholder="Add an interest" /><button class="button primary" type="submit">Add</button></form></section>
+            <section aria-labelledby="suggestions-title"><p class="section-number">WAITING FOR YOU</p><h2 id="suggestions-title">Suggestions</h2>{#if suggestions.length}<ul class="suggestion-list">{#each suggestions as suggestion}<li><span><strong>{suggestion.value}</strong><small>Seen across {suggestion.evidenceCount} allowed sources</small></span><button type="button" aria-label={`Confirm ${suggestion.value}`} on:click={() => decideSuggestion(suggestion, "confirm")}>Confirm</button><button type="button" aria-label={`Reject ${suggestion.value}`} on:click={() => decideSuggestion(suggestion, "reject")}>Dismiss</button></li>{/each}</ul>{:else}<p>Every suggestion has been decided.</p>{/if}</section>
           </div>
           <section class="learned" aria-labelledby="learned-title"><p class="section-number">DIRECTIONAL, NOT DEFINING</p><h2 id="learned-title">What your actions are changing</h2><dl><div><dt>Long-form essays</dt><dd><span style="--amount: 64%"></span>more often</dd></div><div><dt>Breaking news</dt><dd><span style="--amount: 28%"></span>less often</dd></div></dl></section>
         </section>
@@ -316,11 +523,11 @@
         <section class="management-surface settings" aria-labelledby="settings-title">
           <header><p class="eyebrow">BOUNDARIES &amp; PORTABILITY</p><h1 id="settings-title">Settings</h1><p>The guardrails stay explicit. Your private data stays portable.</p></header>
           <div class="settings-list">
-            <section><div><p class="section-number">ALLOWANCES</p><h2>Content labels</h2><p>Excluded labels are hard gates, never ranking hints.</p></div><fieldset><legend class="visually-hidden">Excluded content labels</legend><label><input type="checkbox" checked /> Adult content</label><label><input type="checkbox" checked /> Graphic media</label><label><input type="checkbox" /> Political content</label></fieldset></section>
+            <section><div><p class="section-number">ALLOWANCES</p><h2>Content labels</h2><p>Excluded labels are hard gates, never ranking hints.</p></div><fieldset><legend class="visually-hidden">Excluded content labels</legend>{#each ["adult", "graphic", "political"] as label}<label><input type="checkbox" checked={preferences.blockedLabels.includes(label)} on:change={async (event) => { if (!client) return; const checkbox = event.currentTarget as HTMLInputElement; const previous = preferences; preferences = { ...preferences, blockedLabels: checkbox.checked ? [...preferences.blockedLabels, label] : preferences.blockedLabels.filter((item) => item !== label) }; try { preferences = await client.savePreferences(preferences); statusMessage = "Allowances saved."; } catch (error) { preferences = previous; checkbox.checked = previous.blockedLabels.includes(label); statusMessage = error instanceof Error ? error.message : "Allowances could not be saved."; } }} /> {label[0].toUpperCase() + label.slice(1)} content</label>{/each}</fieldset></section>
             <section><div><p class="section-number">OFFLINE</p><h2>Active edition only</h2><p>The shell and current edition can resume offline. OAuth, exports, and source data never enter the cache.</p></div><p class="connection"><span aria-hidden="true">●</span> Ready for offline resume</p></section>
-            <section><div><p class="section-number">PORTABILITY</p><h2>Your private data</h2><p>Download a validated JSON copy whenever you want.</p></div><a class="button quiet" href="/api/v1/export" download>Export my data</a></section>
-            <section class="danger-zone"><div><p class="section-number">RESET</p><h2>Start over carefully</h2><p>Reset learned taste while keeping manual interests, or explicitly erase everything.</p></div><div class="row-actions"><button class="button quiet" type="button">Reset learned taste</button><button class="text-button danger" type="button">Full reset…</button></div></section>
-            <section><div><p class="section-number">SESSION</p><h2>Leave this device</h2></div><form method="post" action="/api/v1/logout"><button class="button primary" type="submit">Sign out</button></form></section>
+            <section><div><p class="section-number">PORTABILITY</p><h2>Your private data</h2><p>Download a validated JSON copy whenever you want.</p></div><button class="button quiet" type="button" on:click={downloadExport}>Export my data</button></section>
+            <section class="danger-zone"><div><p class="section-number">RESET</p><h2>Start over carefully</h2><p>Reset learned taste while keeping manual interests, or explicitly erase everything.</p></div><div class="row-actions"><button class="button quiet" type="button" on:click={resetLearnedTaste}>Reset learned taste</button><button class="text-button danger" type="button" on:click={fullReset}>Full reset…</button></div></section>
+            <section><div><p class="section-number">SESSION</p><h2>Leave this device</h2></div><button class="button primary" type="button" on:click={signOut}>Sign out</button></section>
           </div>
         </section>
       {/if}
