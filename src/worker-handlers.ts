@@ -19,6 +19,20 @@ import {
 type SyncSourceMessage = ReturnType<typeof SyncSourceMessageSchema.parse>;
 type SyncResult = "processed" | "duplicate" | "retry" | void;
 
+function suggestionId(ownerId: string, value: string): string {
+  const normalized = value.trim().toLowerCase();
+  let hash = 2166136261;
+  for (const byte of new TextEncoder().encode(`${ownerId}\u0000${normalized}`)) {
+    hash ^= byte;
+    hash = Math.imul(hash, 16777619);
+  }
+  const slug = normalized
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48) || "interest";
+  return `suggestion:${slug}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
 export function buildBootstrapSuggestionRecords(
   ownerId: string,
   items: readonly ContentEnvelope[],
@@ -30,17 +44,19 @@ export function buildBootstrapSuggestionRecords(
     observedAt: item.capturedAt,
     tags: item.tags,
   }));
-  return deriveBootstrapSuggestions(evidence).map((suggestion) =>
-    InterestSuggestionSchema.parse({
-      id: `suggestion:${ownerId}:${suggestion.value.toLowerCase()}`,
-      ownerId,
-      value: suggestion.value,
-      evidenceCount: suggestion.evidenceCount,
-      provenance: suggestion.provenance,
-      status: "pending",
-      createdAt,
-    }),
-  );
+  return deriveBootstrapSuggestions(evidence)
+    .filter((suggestion) => suggestion.value.length <= 120)
+    .map((suggestion) =>
+      InterestSuggestionSchema.parse({
+        id: suggestionId(ownerId, suggestion.value),
+        ownerId,
+        value: suggestion.value,
+        evidenceCount: suggestion.evidenceCount,
+        provenance: suggestion.provenance,
+        status: "pending",
+        createdAt,
+      }),
+    );
 }
 
 export interface WorkerHandlerDependencies {

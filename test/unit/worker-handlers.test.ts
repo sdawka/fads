@@ -40,7 +40,7 @@ describe("Worker ingestion handlers", () => {
 
     expect(records).toEqual([
       {
-        id: "suggestion:did:plc:owner:systems",
+        id: expect.stringMatching(/^suggestion:systems:[a-f0-9]{8}$/),
         ownerId: "did:plc:owner",
         value: "Systems",
         evidenceCount: 1,
@@ -49,6 +49,41 @@ describe("Worker ingestion handlers", () => {
         createdAt: "2026-08-28T12:00:00.000Z",
       },
     ]);
+    expect(buildBootstrapSuggestionRecords("did:plc:owner", [], "2026-08-28T12:00:00.000Z"))
+      .toEqual([]);
+  });
+
+  it("keeps suggestion identifiers bounded and skips unusably long observed tags", () => {
+    const records = buildBootstrapSuggestionRecords(
+      `did:plc:${"o".repeat(180)}`,
+      [
+        {
+          id: "rss:one:item",
+          canonicalUri: "https://example.com/item",
+          sourceId: "rss:one",
+          publishedAt: "2026-08-28T11:59:00.000Z",
+          capturedAt: "2026-08-28T12:00:00.000Z",
+          blocks: [{ kind: "paragraph", text: "item" }],
+          media: [],
+          tags: [
+            {
+              value: "A useful topic",
+              provenance: { source: "rss:one", observedAt: "2026-08-28T12:00:00.000Z" },
+            },
+            {
+              value: "x".repeat(121),
+              provenance: { source: "rss:one", observedAt: "2026-08-28T12:00:00.000Z" },
+            },
+          ],
+          labels: [],
+        },
+      ],
+      "2026-08-28T12:00:00.000Z",
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.id.length).toBeLessThanOrEqual(256);
+    expect(records[0]?.value).toBe("A useful topic");
   });
 
   it("acks processed, duplicate, malformed, and permanent work but retries transient work", async () => {
