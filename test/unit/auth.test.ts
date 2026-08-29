@@ -126,6 +126,7 @@ describe("AT Protocol owner authentication", () => {
     expect(metadata.client_id).toBe("https://fads.example/oauth/client-metadata.json");
     expect(metadata.redirect_uris).toEqual(["https://fads.example/oauth/callback"]);
     expect(metadata.dpop_bound_access_tokens).toBe(true);
+    expect(metadata.token_endpoint_auth_signing_alg).toBe("ES256");
     expect(metadata.scope).toBe(
       [
         "atproto",

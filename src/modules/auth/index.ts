@@ -102,6 +102,7 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
     token_endpoint_auth_method: "private_key_jwt",
+    token_endpoint_auth_signing_alg: "ES256",
   };
   const requestLock = createDoRequestLock(options.session, now);
   const getOAuth = () =>
