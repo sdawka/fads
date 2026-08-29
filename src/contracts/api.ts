@@ -221,7 +221,7 @@ export const OpmlImportResponseSchema = z
   .object({
     sources: z.array(SourceSchema),
     rejected: z.array(
-      z.object({ url: z.string().trim().min(1), reason: z.string().trim().min(1) }).strict(),
+      z.object({ url: z.string().trim().max(2048), reason: z.string().trim().min(1) }).strict(),
     ),
   })
   .strict();

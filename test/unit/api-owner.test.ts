@@ -743,6 +743,25 @@ describe("owner API router", () => {
     expect(invalidExport.status).toBe(502);
   });
 
+  it("returns bounded OPML rejections when an outline has no URL", async () => {
+    const handler = createOwnerApiHandler(dependencies());
+    const response = await handler(
+      new Request("https://fads.cc/api/v1/sources/opml", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "opml-rejected" },
+        body: JSON.stringify({
+          opml: '<?xml version="1.0"?><opml version="2.0"><body><outline text="Missing" /></body></opml>',
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      sources: [],
+      rejected: [{ url: "", reason: "Missing xmlUrl" }],
+    });
+  });
+
   it("validates keep membership and refuses refresh without a queue", async () => {
     const repo = repository();
     await repo.saveSource(source());
