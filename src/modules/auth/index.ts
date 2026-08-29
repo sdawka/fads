@@ -161,6 +161,9 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
       const app = await this.inspect(request);
       return app ? getOAuth().restore(app.did) : undefined;
     },
+    async restoreOwner(): Promise<OAuthSession> {
+      return getOAuth().restore(options.ownerDid);
+    },
     async logout(request: Request): Promise<Response> {
       const token = readCookie(request.headers.get("cookie"), APP_COOKIE);
       const app = await this.inspect(request);

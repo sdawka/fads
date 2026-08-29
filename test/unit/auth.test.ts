@@ -401,4 +401,32 @@ describe("AT Protocol owner authentication", () => {
     expect(refreshes).toBe(1);
     expect(maxActiveRefreshes).toBe(1);
   });
+
+  it("restores the configured owner's OAuth session for background ingestion", async () => {
+    const restored: string[] = [];
+    const auth = createAtprotoAuth({
+      ownerDid,
+      origin: "https://fads.example",
+      privateJwks: [
+        { kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" },
+      ],
+      session: new MemoryOwnerSession(),
+      oauthFactory: () => ({
+        metadata: {},
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
+        }),
+        callback: async () => ({ session: { did: ownerDid }, state: {} }) as never,
+        restore: async (did) => {
+          restored.push(did);
+          return { did } as never;
+        },
+        revoke: async () => undefined,
+      }),
+    });
+
+    await expect(auth.restoreOwner()).resolves.toMatchObject({ did: ownerDid });
+    expect(restored).toEqual([ownerDid]);
+  });
 });
