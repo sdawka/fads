@@ -8,7 +8,7 @@ import {
 } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AppEnv } from "../../src/app-env";
-import type { QueueMessage } from "../../src/contracts";
+import type { SyncSourceMessage } from "../../src/contracts";
 import worker from "../fixtures/worker";
 
 const appEnv = env as unknown as AppEnv;
@@ -28,12 +28,18 @@ describe("foundation Worker", () => {
 
   it("acknowledges a versioned ingestion message", async () => {
     const context = createExecutionContext();
-    const batch = createMessageBatch<QueueMessage>("fads-ingestion-local", [
+    const batch = createMessageBatch<SyncSourceMessage>("fads-ingestion-local", [
       {
         id: "message-1",
         timestamp: new Date("2026-08-28T12:00:00.000Z"),
         attempts: 1,
-        body: { version: 1, kind: "sync_all" },
+        body: {
+          version: 1,
+          kind: "sync_source",
+          ownerId: "did:plc:testowner123",
+          sourceId: "rss:missing",
+          workId: "integration:missing",
+        },
       },
     ]);
 

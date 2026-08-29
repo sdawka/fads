@@ -1,6 +1,6 @@
 import { OwnerSessionDO } from "../../src/owner-session-do";
 import type { AppEnv } from "../../src/app-env";
-import { type QueueMessage } from "../../src/contracts";
+import { type SyncSourceMessage } from "../../src/contracts";
 import { handleQueue, handleScheduled } from "../../src/worker-handlers";
 import { createFetchHandler } from "../../src/worker-routing";
 
@@ -15,4 +15,7 @@ export default {
   fetch,
   queue: handleQueue,
   scheduled: handleScheduled,
-} satisfies Pick<Required<ExportedHandler<AppEnv, QueueMessage>>, "fetch" | "queue" | "scheduled">;
+} satisfies Pick<
+  Required<ExportedHandler<AppEnv, SyncSourceMessage>>,
+  "fetch" | "queue" | "scheduled"
+>;

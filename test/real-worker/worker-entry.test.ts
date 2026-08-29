@@ -4,17 +4,18 @@ import {
   createMessageBatch,
   createScheduledController,
   getQueueResult,
+  applyD1Migrations,
 } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { AppEnv } from "../../src/app-env";
-import type { QueueMessage } from "../../src/contracts";
+import type { SyncSourceMessage } from "../../src/contracts";
 // @ts-expect-error Astro generates this entry during the build that precedes this test.
 import builtWorker from "../../dist/server/entry.mjs";
 
 interface BuiltWorker {
   fetch(request: Request, env: AppEnv, context: ExecutionContext): Promise<Response>;
   queue(
-    batch: MessageBatch<QueueMessage>,
+    batch: MessageBatch<SyncSourceMessage>,
     env: AppEnv,
     context: ExecutionContext,
   ): void | Promise<void>;
@@ -27,6 +28,10 @@ interface BuiltWorker {
 
 const worker = builtWorker as BuiltWorker;
 const appEnv = env as unknown as AppEnv;
+
+beforeAll(async () => {
+  await applyD1Migrations(appEnv.DB, env.TEST_MIGRATIONS);
+});
 
 describe("built Worker entry", () => {
   it("serves health and delegates non-API requests to the built Astro application", async () => {
@@ -43,12 +48,18 @@ describe("built Worker entry", () => {
 
   it("runs the real queue and schedule exports", async () => {
     const context = createExecutionContext();
-    const batch = createMessageBatch<QueueMessage>("fads-ingestion-local", [
+    const batch = createMessageBatch<SyncSourceMessage>("fads-ingestion-local", [
       {
         id: "built-entry-message",
         timestamp: new Date("2026-08-28T12:00:00.000Z"),
         attempts: 1,
-        body: { version: 1, kind: "sync_all" },
+        body: {
+          version: 1,
+          kind: "sync_source",
+          ownerId: "did:plc:testowner123",
+          sourceId: "rss:missing",
+          workId: "real-worker:missing",
+        },
       },
     ]);
     const controller = createScheduledController({ cron: "*/15 * * * *" });

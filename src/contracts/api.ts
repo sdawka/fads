@@ -180,6 +180,7 @@ export const SyncSourceMessageSchema = z
     workId: IdSchema,
   })
   .strict();
+export type SyncSourceMessage = z.infer<typeof SyncSourceMessageSchema>;
 
 export const SessionResponseSchema = z.union([
   z.object({ authenticated: z.literal(false) }).strict(),

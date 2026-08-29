@@ -1,7 +1,7 @@
 import { handle } from "@astrojs/cloudflare/handler";
 import type { AppEnv } from "./app-env";
 import { handleApplicationRuntime } from "./application-runtime";
-import { type QueueMessage } from "./contracts";
+import { type SyncSourceMessage } from "./contracts";
 import { OwnerSessionDO } from "./owner-session-do";
 import { handleQueue, handleScheduled } from "./worker-handlers";
 import { createFetchHandler } from "./worker-routing";
@@ -20,4 +20,4 @@ export default {
 
   queue: handleQueue,
   scheduled: handleScheduled,
-} satisfies ExportedHandler<AppEnv, QueueMessage>;
+} satisfies ExportedHandler<AppEnv, SyncSourceMessage>;
