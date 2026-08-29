@@ -73,7 +73,7 @@ export interface OwnerEditionOperations {
 export interface OwnerApiDependencies {
   ownerDid: string;
   authenticate(request: Request): Promise<{ did: string } | undefined>;
-  logout(request: Request): Promise<Response>;
+  logout(request: Request, options?: { allSessions?: boolean }): Promise<Response>;
   repository: ApiRepository;
   editions: OwnerEditionOperations;
   enqueueSource?: (message: ReturnType<typeof SyncSourceMessageSchema.parse>) => Promise<void>;
@@ -850,7 +850,7 @@ async function route(input: {
       body.full ? idempotencySelector : undefined,
     );
     if (body.full) {
-      const result = await dependencies.logout(request);
+      const result = await dependencies.logout(request, { allSessions: true });
       if (result.status !== 204) throw new ContractFailure("Invalid logout response");
       return withPrivateHeaders(
         new Response(null, { status: 204, headers: new Headers(result.headers) }),

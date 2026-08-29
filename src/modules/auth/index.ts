@@ -42,6 +42,7 @@ export interface OwnerSessionStore {
   readAppSession(input: { tokenHash: string; now: number }): Promise<{ did: string } | undefined>;
   touchAppSession(input: { tokenHash: string; now: number; idleExpiresAt: number }): Promise<void>;
   deleteAppSession(input: { tokenHash: string }): Promise<void>;
+  deleteAllAppSessions(): Promise<void>;
   getOAuthState(input: { key: string }): Promise<unknown>;
   putOAuthState(input: { key: string; value: unknown }): Promise<void>;
   deleteOAuthState(input: { key: string }): Promise<void>;
@@ -187,10 +188,14 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
     async restoreOwner(): Promise<OAuthSession> {
       return getOAuth().restore(options.ownerDid);
     },
-    async logout(request: Request): Promise<Response> {
+    async logout(
+      request: Request,
+      logoutOptions: { allSessions?: boolean } = {},
+    ): Promise<Response> {
       const token = readCookie(request.headers.get("cookie"), APP_COOKIE);
       const app = await this.inspect(request);
-      if (token)
+      if (logoutOptions.allSessions) await options.session.deleteAllAppSessions();
+      else if (token)
         await options.session.deleteAppSession({ tokenHash: await hashAppSessionToken(token) });
       if (app) {
         try {

@@ -86,6 +86,26 @@ describe("OwnerSessionDO", () => {
     expect(row.count).toBe(0);
   });
 
+  it("can revoke every app session for the single owner", async () => {
+    const appEnv = env as unknown as AppEnv;
+    const stub = appEnv.OWNER_SESSION.getByName("owner-all-sessions");
+    for (const tokenHash of ["first", "second"]) {
+      await stub.createAppSession({
+        tokenHash,
+        did: "did:plc:owner123",
+        idleExpiresAt: Date.now() + 60_000,
+        absoluteExpiresAt: Date.now() + 60_000,
+      });
+    }
+
+    await stub.deleteAllAppSessions();
+
+    const count = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM app_sessions").one(),
+    );
+    expect(count.count).toBe(0);
+  });
+
   it("retains and renews a refresh lease beyond thirty seconds", async () => {
     const appEnv = env as unknown as AppEnv;
     const stub = appEnv.OWNER_SESSION.getByName("owner-refresh");

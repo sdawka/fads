@@ -33,6 +33,10 @@ class MemoryOwnerSession {
     this.apps.delete(input.tokenHash);
   }
 
+  async deleteAllAppSessions() {
+    this.apps.clear();
+  }
+
   async touchAppSession(input: { tokenHash: string; now: number; idleExpiresAt: number }) {
     const app = this.apps.get(input.tokenHash);
     if (app && app.absoluteExpiresAt > input.now)
@@ -388,6 +392,41 @@ describe("AT Protocol owner authentication", () => {
       auth.inspect(new Request("https://fads.example", { headers: { cookie } })),
     ).resolves.toBeUndefined();
     expect(session.oauth.has(ownerDid)).toBe(false);
+  });
+
+  it("clears every browser session during a full private-data reset", async () => {
+    const session = new MemoryOwnerSession();
+    const auth = createAtprotoAuth({
+      ownerDid,
+      origin: "https://fads.example",
+      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      session,
+      oauthFactory: () => ({
+        metadata: {},
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
+        }),
+        callback: async () => ({ session: { did: ownerDid }, state: {} }) as never,
+        restore: async () => ({ did: ownerDid }) as never,
+        revoke: async () => undefined,
+      }),
+    });
+    const callback = await auth.callback(
+      new Request("https://fads.example/oauth/callback?code=code&state=state"),
+    );
+    const cookie = callback.headers.get("set-cookie")?.split(";")[0] ?? "";
+    session.apps.set("another-browser", {
+      did: ownerDid,
+      idleExpiresAt: Date.now() + 60_000,
+      absoluteExpiresAt: Date.now() + 60_000,
+    });
+
+    await auth.logout(new Request("https://fads.example/logout", { headers: { cookie } }), {
+      allSessions: true,
+    });
+
+    expect(session.apps.size).toBe(0);
   });
 
   it("extends an active session's bounded idle expiry without extending its absolute expiry", async () => {

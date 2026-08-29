@@ -371,6 +371,7 @@ describe("owner API router", () => {
   it("revokes authentication and clears the cookie after a full reset", async () => {
     let fullReset = false;
     let loggedOut = false;
+    let allSessions = false;
     const repo = repository();
     repo.resetOwnerData = async (_ownerId, full) => {
       fullReset = full;
@@ -378,8 +379,9 @@ describe("owner API router", () => {
     const handler = createOwnerApiHandler(
       dependencies({
         repository: repo,
-        logout: async () => {
+        logout: async (_request, options) => {
           loggedOut = true;
+          allSessions = options?.allSessions === true;
           return new Response(null, {
             status: 204,
             headers: { "set-cookie": "fads_session=; Path=/; Max-Age=0" },
@@ -398,6 +400,7 @@ describe("owner API router", () => {
 
     expect(fullReset).toBe(true);
     expect(loggedOut).toBe(true);
+    expect(allSessions).toBe(true);
     expect(response.headers.get("set-cookie")).toBe("fads_session=; Path=/; Max-Age=0");
   });
 

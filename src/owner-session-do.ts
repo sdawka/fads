@@ -164,6 +164,11 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
     return Promise.resolve();
   }
 
+  deleteAllAppSessions(): Promise<void> {
+    this.ctx.storage.sql.exec("DELETE FROM app_sessions");
+    return Promise.resolve();
+  }
+
   tryAcquireRefreshLock(input: { name: string; holder: string; now: number }): Promise<boolean> {
     this.ctx.storage.sql.exec("DELETE FROM refresh_locks WHERE expires_at <= ?", input.now);
     const existing = Array.from(

@@ -29,7 +29,7 @@ export async function handleApplicationRuntime(
       const api = createOwnerApiHandler({
         ownerDid: config.ownerDid,
         authenticate: () => Promise.resolve(owner),
-        logout: (logoutRequest) => auth.logout(logoutRequest),
+        logout: (logoutRequest, options) => auth.logout(logoutRequest, options),
         repository,
         editions,
         enqueueSource: async (message) => {
