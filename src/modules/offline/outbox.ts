@@ -11,6 +11,7 @@ export interface OutboxEntry {
   idempotencyKey: string;
   requestHash: string;
   createdAt: number;
+  sequence: number;
   attempts: number;
   state: "pending" | "failed";
   lastError?: string;
@@ -37,6 +38,11 @@ const FEEDBACK_KINDS = new Set([
   "keep",
 ]);
 let lastCreatedAt = 0;
+let nextSequence = 0;
+const replayLocks = new WeakMap<
+  OutboxStore,
+  Promise<{ sent: number; pending: number; failed: number }>
+>();
 
 function appOrigin(): string {
   if (typeof location !== "undefined") return location.origin;
@@ -140,6 +146,7 @@ export async function enqueueMutation(
         lastCreatedAt = Math.max(now, lastCreatedAt + 1);
         return lastCreatedAt;
       })(),
+    sequence: ++nextSequence,
     attempts: 0,
     state: "pending",
   };
@@ -158,13 +165,15 @@ export function classifyReplayResponse(response?: Response, error?: unknown): Re
     : "permanent";
 }
 
-export async function replayOutbox(
+async function replayOutboxUnlocked(
   store: OutboxStore,
   send: (entry: OutboxEntry) => Promise<Response>,
 ): Promise<{ sent: number; pending: number; failed: number }> {
   let sent = 0;
   let failed = 0;
-  const entries = (await store.list()).sort((a, b) => a.createdAt - b.createdAt);
+  const entries = (await store.list()).sort(
+    (a, b) => a.createdAt - b.createdAt || a.sequence - b.sequence || a.id.localeCompare(b.id),
+  );
   for (const entry of entries) {
     if (entry.state === "failed") break;
     await store.markAttempt(entry.id);
@@ -192,6 +201,20 @@ export async function replayOutbox(
   }
   const pending = await store.list();
   return { sent, pending: pending.length, failed };
+}
+
+export function replayOutbox(
+  store: OutboxStore,
+  send: (entry: OutboxEntry) => Promise<Response>,
+): Promise<{ sent: number; pending: number; failed: number }> {
+  const previous = replayLocks.get(store) ?? Promise.resolve({ sent: 0, pending: 0, failed: 0 });
+  const current = previous
+    .catch(() => ({ sent: 0, pending: 0, failed: 0 }))
+    .then(() => replayOutboxUnlocked(store, send));
+  replayLocks.set(store, current);
+  return current.finally(() => {
+    if (replayLocks.get(store) === current) replayLocks.delete(store);
+  });
 }
 
 export function createMemoryOutbox(): OutboxStore {

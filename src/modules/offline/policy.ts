@@ -1,3 +1,5 @@
+import { EditionResponseSchema } from "../../contracts";
+
 /** The only personalized response eligible for the offline cache. */
 export const ACTIVE_EDITION_PATH = "/api/v1/editions/active";
 
@@ -27,61 +29,70 @@ export function isCacheableGet(request: Request, origin?: string): boolean {
   );
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const expected = new Set(keys);
+  return Object.keys(value).every((key) => expected.has(key)) && keys.every((key) => key in value);
 }
 
 /** Structural validation prevents malformed/private API responses entering the personal cache. */
 export function isValidActiveEditionResponse(value: unknown): boolean {
-  if (!record(value)) return false;
-  const edition = value.edition;
-  const content = value.content;
+  const parsed = EditionResponseSchema.safeParse(value);
+  if (!parsed.success) return false;
+  const response = parsed.data;
+  const edition = response.edition;
+  const content = response.content;
   if (
-    !record(edition) ||
-    typeof edition.id !== "string" ||
-    !edition.id.trim() ||
-    !Array.isArray(edition.items) ||
-    edition.items.length > 12
+    !hasExactKeys(edition, [
+      "id",
+      "ownerId",
+      "createdAt",
+      "curiosity",
+      "energy",
+      "items",
+      "decisionTrace",
+    ])
   )
     return false;
+  if (!Array.isArray(edition.items) || edition.items.length > 12) return false;
   if (
     !Array.isArray(content) ||
     content.length > 12 ||
-    typeof value.position !== "number" ||
-    !Number.isInteger(value.position) ||
-    value.position < 0 ||
-    value.position > edition.items.length ||
-    typeof value.completed !== "boolean"
+    !Number.isInteger(response.position) ||
+    response.position < 0 ||
+    response.position > edition.items.length
   )
     return false;
   const contentIds = new Set<string>();
+  const itemIds = new Set<string>();
+  const positions = new Set<number>();
   for (const item of edition.items) {
-    if (
-      !record(item) ||
-      typeof item.contentId !== "string" ||
-      !item.contentId.trim() ||
-      typeof item.position !== "number" ||
-      !Number.isInteger(item.position) ||
-      item.position < 0 ||
-      item.position >= edition.items.length
-    )
+    if (!hasExactKeys(item, ["id", "contentId", "frame", "position", "decisionTrace"]))
       return false;
+    if (itemIds.has(item.id) || positions.has(item.position) || item.position !== positions.size)
+      return false;
+    itemIds.add(item.id);
+    positions.add(item.position);
   }
   for (const item of content) {
     if (
-      !record(item) ||
-      typeof item.id !== "string" ||
-      !item.id.trim() ||
-      "html" in item ||
-      "raw" in item ||
-      "markup" in item
+      !hasExactKeys(item, [
+        "id",
+        "canonicalUri",
+        "sourceId",
+        "publishedAt",
+        "capturedAt",
+        "blocks",
+        "media",
+        "tags",
+        "labels",
+      ])
     )
       return false;
     contentIds.add(item.id);
-    if ("blocks" in item && !Array.isArray(item.blocks)) return false;
   }
-  return edition.items.every((item) =>
-    contentIds.has((item as Record<string, unknown>).contentId as string),
+  return (
+    contentIds.size === content.length &&
+    edition.items.every((item) => contentIds.has(item.contentId))
   );
 }
 

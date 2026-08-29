@@ -132,6 +132,17 @@ describe("offline mutation outbox", () => {
     expect(result).toMatchObject({ sent: 0, pending: 1, failed: 0 });
   });
 
+  it("serializes concurrent replay calls so an entry is sent once", async () => {
+    const store = createMemoryOutbox();
+    await enqueueMutation(store, interaction());
+    const send = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return new Response(null, { status: 204 });
+    });
+    await Promise.all([replayOutbox(store, send), replayOutbox(store, send)]);
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it("classifies network errors as transient and 4xx errors as permanent", () => {
     expect(classifyReplayResponse(undefined, new TypeError("offline"))).toBe("transient");
     expect(classifyReplayResponse(new Response(null, { status: 408 }))).toBe("transient");

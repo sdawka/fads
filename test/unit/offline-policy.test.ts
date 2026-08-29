@@ -8,6 +8,44 @@ import {
   shouldUseOfflineFallback,
 } from "../../src/modules/offline/policy";
 
+const content = (id: string) => ({
+  id,
+  canonicalUri: `https://example.com/${id}`,
+  sourceId: "rss:source-1",
+  publishedAt: "2026-01-01T00:00:00.000Z",
+  capturedAt: "2026-01-01T00:00:00.000Z",
+  blocks: [{ kind: "paragraph", text: "A safe item" }],
+  media: [],
+  tags: [],
+  labels: [],
+});
+
+const active = (
+  items = [
+    {
+      id: "item-1",
+      contentId: "content-1",
+      frame: "frame",
+      position: 0,
+      decisionTrace: { factors: [] },
+    },
+  ],
+  contents = [content("content-1")],
+) => ({
+  edition: {
+    id: "edition-1",
+    ownerId: "owner",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    curiosity: 50,
+    energy: 50,
+    items,
+    decisionTrace: { factors: [] },
+  },
+  content: contents,
+  position: 0,
+  completed: false,
+});
+
 describe("offline cache policy", () => {
   it("pre-caches only the owned shell and offline fallback assets", () => {
     expect(STATIC_ASSETS).toContain("/");
@@ -32,41 +70,38 @@ describe("offline cache policy", () => {
     ).toBe(false);
   });
 
-  it("validates the finite active edition shape before caching", () => {
-    expect(
-      isValidActiveEditionResponse({
-        edition: { id: "edition-1", items: [{ contentId: "content-1", position: 0 }] },
-        content: [{ id: "content-1", title: "A safe item" }],
-        position: 0,
-        completed: false,
-      }),
-    ).toBe(true);
-    expect(
-      isValidActiveEditionResponse({
-        edition: { id: "empty", items: [] },
-        content: [],
-        position: 0,
-        completed: false,
-      }),
-    ).toBe(true);
+  it("validates the complete finite active edition shape before caching", () => {
+    expect(isValidActiveEditionResponse(active())).toBe(true);
+    expect(isValidActiveEditionResponse(active([], []))).toBe(true);
     expect(isValidActiveEditionResponse({ edition: { items: [] }, content: [], position: 0 })).toBe(
       false,
     );
+    expect(isValidActiveEditionResponse({ ...active(), position: 13 })).toBe(false);
+    expect(isValidActiveEditionResponse({ ...active(), content: [{ html: "<script>" }] })).toBe(
+      false,
+    );
     expect(
-      isValidActiveEditionResponse({
-        edition: { items: [] },
-        content: [],
-        position: 13,
-        completed: false,
-      }),
-    ).toBe(false);
-    expect(
-      isValidActiveEditionResponse({
-        edition: { items: [] },
-        content: [{ html: "<script>" }],
-        position: 0,
-        completed: false,
-      }),
+      isValidActiveEditionResponse(
+        active(
+          [
+            {
+              id: "item-1",
+              contentId: "content-1",
+              frame: "frame",
+              position: 0,
+              decisionTrace: { factors: [] },
+            },
+            {
+              id: "item-1",
+              contentId: "content-2",
+              frame: "frame",
+              position: 0,
+              decisionTrace: { factors: [] },
+            },
+          ],
+          [content("content-1"), content("content-2")],
+        ),
+      ),
     ).toBe(false);
   });
 
