@@ -20,7 +20,10 @@ describe("OwnerSessionDO", () => {
   it("consumes an OAuth callback state exactly once", async () => {
     const appEnv = env as unknown as AppEnv;
     const stub = appEnv.OWNER_SESSION.getByName("owner");
-    await stub.putOAuthState({ key: "state-1", value: { pkceVerifier: "verifier", expiresAt: Date.now() + 60_000 } });
+    await stub.putOAuthState({
+      key: "state-1",
+      value: { pkceVerifier: "verifier", expiresAt: Date.now() + 60_000 },
+    });
 
     await expect(stub.getOAuthState({ key: "state-1" })).resolves.toEqual({
       pkceVerifier: "verifier",
@@ -39,9 +42,13 @@ describe("OwnerSessionDO", () => {
       absoluteExpiresAt: 2,
     });
 
-    await expect(stub.readAppSession({ tokenHash: "sha256-token-only", now: 2 })).resolves.toBeUndefined();
+    await expect(
+      stub.readAppSession({ tokenHash: "sha256-token-only", now: 2 }),
+    ).resolves.toBeUndefined();
     const row = await runInDurableObject(stub, (instance, state) => {
-      return state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM app_sessions").one();
+      return state.storage.sql
+        .exec<{ count: number }>("SELECT COUNT(*) AS count FROM app_sessions")
+        .one();
     });
     expect(row.count).toBe(0);
   });
@@ -50,9 +57,17 @@ describe("OwnerSessionDO", () => {
     const appEnv = env as unknown as AppEnv;
     const stub = appEnv.OWNER_SESSION.getByName("owner-refresh");
 
-    await expect(stub.tryAcquireRefreshLock({ name: "oauth-session-owner", holder: "first", now: 0 })).resolves.toBe(true);
-    await expect(stub.tryAcquireRefreshLock({ name: "oauth-session-owner", holder: "second", now: 30_001 })).resolves.toBe(false);
-    await expect(stub.renewRefreshLock({ name: "oauth-session-owner", holder: "first", now: 240_000 })).resolves.toBe(true);
-    await expect(stub.tryAcquireRefreshLock({ name: "oauth-session-owner", holder: "second", now: 300_001 })).resolves.toBe(false);
+    await expect(
+      stub.tryAcquireRefreshLock({ name: "oauth-session-owner", holder: "first", now: 0 }),
+    ).resolves.toBe(true);
+    await expect(
+      stub.tryAcquireRefreshLock({ name: "oauth-session-owner", holder: "second", now: 30_001 }),
+    ).resolves.toBe(false);
+    await expect(
+      stub.renewRefreshLock({ name: "oauth-session-owner", holder: "first", now: 240_000 }),
+    ).resolves.toBe(true);
+    await expect(
+      stub.tryAcquireRefreshLock({ name: "oauth-session-owner", holder: "second", now: 300_001 }),
+    ).resolves.toBe(false);
   });
 });

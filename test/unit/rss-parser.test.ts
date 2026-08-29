@@ -49,7 +49,13 @@ describe("RSS and Atom parsing", () => {
   });
 
   it("returns no items for malformed XML and ignores duplicate GUIDs", () => {
-    expect(parseFeed("<rss><channel><item>", { feedUrl: "https://example.com/feed", sourceId: "rss:x", capturedAt }).items).toEqual([]);
+    expect(
+      parseFeed("<rss><channel><item>", {
+        feedUrl: "https://example.com/feed",
+        sourceId: "rss:x",
+        capturedAt,
+      }).items,
+    ).toEqual([]);
     expect(
       parseFeed(
         `<rss><channel><item><guid>a</guid><title>One</title></item><item><guid>a</guid><title>Two</title></item></channel></rss>`,

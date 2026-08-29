@@ -80,14 +80,17 @@ function record(value: unknown): XmlRecord | undefined {
 }
 
 function valueOf(value: unknown): string | undefined {
-  if (typeof value === "string" || typeof value === "number") return String(value).trim() || undefined;
+  if (typeof value === "string" || typeof value === "number")
+    return String(value).trim() || undefined;
   const entry = record(value);
   if (!entry) return undefined;
   return valueOf(entry["#text"] ?? entry.__cdata);
 }
 
 function local(entry: XmlRecord, name: string): unknown {
-  const key = Object.keys(entry).find((candidate) => candidate === name || candidate.endsWith(`:${name}`));
+  const key = Object.keys(entry).find(
+    (candidate) => candidate === name || candidate.endsWith(`:${name}`),
+  );
   return key ? entry[key] : undefined;
 }
 
@@ -115,7 +118,14 @@ function appendDescription(blocks: SafeBlock[], content: unknown, baseUrl: strin
   blocks.push(...normalized);
 }
 
-function media(id: string, kind: "image" | "audio" | "video", url: string, sourceId: string, capturedAt: string, feedUrl: string): MediaAttachment {
+function media(
+  id: string,
+  kind: "image" | "audio" | "video",
+  url: string,
+  sourceId: string,
+  capturedAt: string,
+  feedUrl: string,
+): MediaAttachment {
   return {
     id,
     kind,
@@ -129,7 +139,8 @@ function parseRssItem(entry: XmlRecord, options: ParseFeedOptions): ContentEnvel
   const guid = valueOf(local(entry, "guid"));
   const link = firstUrl(local(entry, "link"), options.feedUrl);
   const identity = guid ?? link ?? `entry-${title ?? "untitled"}`;
-  const canonicalUri = link ?? `${canonicalizeUrl(options.feedUrl)}#${encodeURIComponent(identity)}`;
+  const canonicalUri =
+    link ?? `${canonicalizeUrl(options.feedUrl)}#${encodeURIComponent(identity)}`;
   const blocks: SafeBlock[] = title ? [{ kind: "heading", text: title, level: 2 }] : [];
   appendDescription(blocks, local(entry, "content") ?? local(entry, "description"), canonicalUri);
   const author = valueOf(local(entry, "author") ?? local(entry, "creator"));
@@ -142,17 +153,41 @@ function parseRssItem(entry: XmlRecord, options: ParseFeedOptions): ContentEnvel
   const enclosureUrl = enclosure ? firstUrl(enclosure["@_url"], options.feedUrl) : undefined;
   if (enclosureUrl) {
     const type = valueOf(enclosure?.["@_type"]);
-    attachments.push(media(`${options.sourceId}:${identity}:enclosure`, type?.startsWith("video/") ? "video" : "audio", enclosureUrl, options.sourceId, options.capturedAt, options.feedUrl));
+    attachments.push(
+      media(
+        `${options.sourceId}:${identity}:enclosure`,
+        type?.startsWith("video/") ? "video" : "audio",
+        enclosureUrl,
+        options.sourceId,
+        options.capturedAt,
+        options.feedUrl,
+      ),
+    );
   }
   const artwork = record(local(entry, "image"));
-  const artworkUrl = artwork ? firstUrl(artwork["@_href"] ?? artwork["@_url"], options.feedUrl) : undefined;
-  if (artworkUrl) attachments.push(media(`${options.sourceId}:${identity}:artwork`, "image", artworkUrl, options.sourceId, options.capturedAt, options.feedUrl));
+  const artworkUrl = artwork
+    ? firstUrl(artwork["@_href"] ?? artwork["@_url"], options.feedUrl)
+    : undefined;
+  if (artworkUrl)
+    attachments.push(
+      media(
+        `${options.sourceId}:${identity}:artwork`,
+        "image",
+        artworkUrl,
+        options.sourceId,
+        options.capturedAt,
+        options.feedUrl,
+      ),
+    );
 
   return {
     id: `${options.sourceId}:${identity}`,
     canonicalUri,
     sourceId: options.sourceId,
-    publishedAt: dateOrCaptured(local(entry, "pubDate") ?? local(entry, "published") ?? local(entry, "updated"), options.capturedAt),
+    publishedAt: dateOrCaptured(
+      local(entry, "pubDate") ?? local(entry, "published") ?? local(entry, "updated"),
+      options.capturedAt,
+    ),
     capturedAt: options.capturedAt,
     blocks,
     media: attachments,
@@ -164,10 +199,13 @@ function parseRssItem(entry: XmlRecord, options: ParseFeedOptions): ContentEnvel
 function parseAtomItem(entry: XmlRecord, options: ParseFeedOptions): ContentEnvelope {
   const title = valueOf(local(entry, "title"));
   const id = valueOf(local(entry, "id"));
-  const linkNode = arrayOf(local(entry, "link")).map(record).find((item) => item?.["@_rel"] !== "self");
+  const linkNode = arrayOf(local(entry, "link"))
+    .map(record)
+    .find((item) => item?.["@_rel"] !== "self");
   const link = linkNode ? firstUrl(linkNode["@_href"], options.feedUrl) : undefined;
   const identity = id ?? link ?? `entry-${title ?? "untitled"}`;
-  const canonicalUri = link ?? `${canonicalizeUrl(options.feedUrl)}#${encodeURIComponent(identity)}`;
+  const canonicalUri =
+    link ?? `${canonicalizeUrl(options.feedUrl)}#${encodeURIComponent(identity)}`;
   const blocks: SafeBlock[] = title ? [{ kind: "heading", text: title, level: 2 }] : [];
   appendDescription(blocks, local(entry, "content") ?? local(entry, "summary"), canonicalUri);
   const authorRecord = record(local(entry, "author"));
@@ -177,7 +215,10 @@ function parseAtomItem(entry: XmlRecord, options: ParseFeedOptions): ContentEnve
     id: `${options.sourceId}:${identity}`,
     canonicalUri,
     sourceId: options.sourceId,
-    publishedAt: dateOrCaptured(local(entry, "published") ?? local(entry, "updated"), options.capturedAt),
+    publishedAt: dateOrCaptured(
+      local(entry, "published") ?? local(entry, "updated"),
+      options.capturedAt,
+    ),
     capturedAt: options.capturedAt,
     blocks,
     media: [],
@@ -194,7 +235,11 @@ export function parseFeed(source: string, options: ParseFeedOptions): ParsedFeed
   const rss = record(document.rss);
   const channel = rss ? record(local(rss, "channel")) : undefined;
   const atom = record(document.feed);
-  const entries = channel ? arrayOf(local(channel, "item")).map(record) : atom ? arrayOf(local(atom, "entry")).map(record) : [];
+  const entries = channel
+    ? arrayOf(local(channel, "item")).map(record)
+    : atom
+      ? arrayOf(local(atom, "entry")).map(record)
+      : [];
   const seen = new Set<string>();
   const items = entries.flatMap((entry) => {
     if (!entry) return [];
@@ -213,14 +258,20 @@ function cursorFrom(value: string | undefined): SyncCursor {
     if (!candidate) return {};
     return {
       ...(typeof candidate.etag === "string" ? { etag: candidate.etag } : {}),
-      ...(typeof candidate.lastModified === "string" ? { lastModified: candidate.lastModified } : {}),
+      ...(typeof candidate.lastModified === "string"
+        ? { lastModified: candidate.lastModified }
+        : {}),
     };
   } catch {
     return {};
   }
 }
 
-async function readBoundedBody(response: Response, maxBytes: number, signal: AbortSignal): Promise<string> {
+async function readBoundedBody(
+  response: Response,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -300,17 +351,24 @@ export function createRssSourceAdapter(options: RssSourceAdapterOptions): Source
       const validators = cursorFrom(cursor);
       let url = validatePublicFeedUrl(options.feedUrl);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(new DOMException("deadline exceeded", "TimeoutError")), deadlineMs);
+      const timer = setTimeout(
+        () => controller.abort(new DOMException("deadline exceeded", "TimeoutError")),
+        deadlineMs,
+      );
       try {
         for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
-          const headers = new Headers({ accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, text/plain;q=0.5" });
+          const headers = new Headers({
+            accept:
+              "application/rss+xml, application/atom+xml, application/xml, text/xml, text/plain;q=0.5",
+          });
           if (validators.etag) headers.set("if-none-match", validators.etag);
           if (validators.lastModified) headers.set("if-modified-since", validators.lastModified);
           const response = await raceWithAbort(
             options.fetch(url, { headers, redirect: "manual", signal: controller.signal }),
             controller.signal,
           );
-          if (response.status === 304) return { items: [], ...(cursor ? { nextCursor: cursor } : {}) };
+          if (response.status === 304)
+            return { items: [], ...(cursor ? { nextCursor: cursor } : {}) };
           if (isRedirect(response)) {
             const location = response.headers.get("location");
             if (!location) throw new Error("Feed redirect missing location");
@@ -319,22 +377,36 @@ export function createRssSourceAdapter(options: RssSourceAdapterOptions): Source
             continue;
           }
           if (!response.ok) throw new Error(`Feed fetch failed with ${response.status}`);
-          const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-          if (!contentType || (!feedContentTypes.has(contentType) && contentType !== "text/plain")) {
+          const contentType = response.headers
+            .get("content-type")
+            ?.split(";", 1)[0]
+            ?.trim()
+            .toLowerCase();
+          if (
+            !contentType ||
+            (!feedContentTypes.has(contentType) && contentType !== "text/plain")
+          ) {
             throw new Error("Feed response has an unsupported content type");
           }
           const body = await readBoundedBody(response, maxBytes, controller.signal);
-          if (contentType === "text/plain" && !/^\s*(?:<\?xml[^>]*>\s*)?<(?:rss|feed)\b/i.test(body)) {
+          if (
+            contentType === "text/plain" &&
+            !/^\s*(?:<\?xml[^>]*>\s*)?<(?:rss|feed)\b/i.test(body)
+          ) {
             throw new Error("Plain-text response is not a feed");
           }
           const next: SyncCursor = {
             ...(response.headers.get("etag") ? { etag: response.headers.get("etag")! } : {}),
-            ...(response.headers.get("last-modified") ? { lastModified: response.headers.get("last-modified")! } : {}),
+            ...(response.headers.get("last-modified")
+              ? { lastModified: response.headers.get("last-modified")! }
+              : {}),
           };
           return {
-            items: parseFeed(body, { feedUrl: url, sourceId: options.sourceId, capturedAt: now() }).items.map(
-              (item) => ContentEnvelopeSchema.parse(item),
-            ),
+            items: parseFeed(body, {
+              feedUrl: url,
+              sourceId: options.sourceId,
+              capturedAt: now(),
+            }).items.map((item) => ContentEnvelopeSchema.parse(item)),
             ...(Object.keys(next).length ? { nextCursor: JSON.stringify(next) } : {}),
           };
         }
@@ -357,7 +429,12 @@ export function createRssSynchronizer(options: RssSynchronizerOptions) {
       const result = await options.adapter.sync(cursor);
       const items: ContentEnvelope[] = [];
       for (const item of result.items) {
-        if (!(await options.repository.isKnownContent({ id: item.id, canonicalUri: item.canonicalUri }))) {
+        if (
+          !(await options.repository.isKnownContent({
+            id: item.id,
+            canonicalUri: item.canonicalUri,
+          }))
+        ) {
           items.push(item);
         }
       }

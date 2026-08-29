@@ -64,9 +64,15 @@ describe("RSS network boundary", () => {
   it("sends validators, follows only public redirects, streams XML, and returns the next cursor", async () => {
     const fetch = vi
       .fn()
-      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: "https://cdn.example/feed.xml" } }))
       .mockResolvedValueOnce(
-        chunkedResponse(rss, { "content-type": "application/rss+xml", etag: '"new"', "last-modified": "Thu, 28 Aug 2026 10:00:00 GMT" }),
+        new Response(null, { status: 302, headers: { location: "https://cdn.example/feed.xml" } }),
+      )
+      .mockResolvedValueOnce(
+        chunkedResponse(rss, {
+          "content-type": "application/rss+xml",
+          etag: '"new"',
+          "last-modified": "Thu, 28 Aug 2026 10:00:00 GMT",
+        }),
       );
     const adapter = createRssSourceAdapter({
       sourceId: "rss:test",
@@ -75,11 +81,20 @@ describe("RSS network boundary", () => {
       now: () => "2026-08-28T12:00:00.000Z",
     });
 
-    const result = await adapter.sync(JSON.stringify({ etag: '"old"', lastModified: "Wed, 27 Aug 2026 10:00:00 GMT" }));
+    const result = await adapter.sync(
+      JSON.stringify({ etag: '"old"', lastModified: "Wed, 27 Aug 2026 10:00:00 GMT" }),
+    );
 
     expect(result.items.map((item) => item.id)).toEqual(["rss:test:x"]);
-    expect(JSON.parse(result.nextCursor ?? "{}")).toEqual({ etag: '"new"', lastModified: "Thu, 28 Aug 2026 10:00:00 GMT" });
-    expect(fetch).toHaveBeenNthCalledWith(1, "https://example.com/feed", expect.objectContaining({ redirect: "manual" }));
+    expect(JSON.parse(result.nextCursor ?? "{}")).toEqual({
+      etag: '"new"',
+      lastModified: "Thu, 28 Aug 2026 10:00:00 GMT",
+    });
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "https://example.com/feed",
+      expect.objectContaining({ redirect: "manual" }),
+    );
     expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get("if-none-match")).toBe('"old"');
   });
 
@@ -91,14 +106,19 @@ describe("RSS network boundary", () => {
       now: () => "2026-08-28T12:00:00.000Z",
     });
 
-    await expect(adapter.sync(JSON.stringify({ etag: '"old"' }))).resolves.toEqual({ items: [], nextCursor: JSON.stringify({ etag: '"old"' }) });
+    await expect(adapter.sync(JSON.stringify({ etag: '"old"' }))).resolves.toEqual({
+      items: [],
+      nextCursor: JSON.stringify({ etag: '"old"' }),
+    });
   });
 
   it("returns schema-valid output through the frozen SourceAdapter contract", async () => {
     const validAdapter: SourceAdapter = createRssSourceAdapter({
       sourceId: "rss:contract",
       feedUrl: "https://example.com/feed",
-      fetch: vi.fn().mockResolvedValue(chunkedResponse(rss, { "content-type": "application/rss+xml" })),
+      fetch: vi
+        .fn()
+        .mockResolvedValue(chunkedResponse(rss, { "content-type": "application/rss+xml" })),
       now: () => "2026-08-28T12:00:00.000Z",
     });
     const valid = await validAdapter.sync();
@@ -107,7 +127,9 @@ describe("RSS network boundary", () => {
     const adapter: SourceAdapter = createRssSourceAdapter({
       sourceId: "rss:contract",
       feedUrl: "https://example.com/feed",
-      fetch: vi.fn().mockResolvedValue(chunkedResponse(rss, { "content-type": "application/rss+xml" })),
+      fetch: vi
+        .fn()
+        .mockResolvedValue(chunkedResponse(rss, { "content-type": "application/rss+xml" })),
       now: () => "not-a-timestamp",
     });
 
@@ -115,11 +137,17 @@ describe("RSS network boundary", () => {
   });
 
   it("aborts a slow response body after the deadline", async () => {
-    const neverEndingBody = new ReadableStream<Uint8Array>({ pull: () => new Promise<void>(() => undefined) });
+    const neverEndingBody = new ReadableStream<Uint8Array>({
+      pull: () => new Promise<void>(() => undefined),
+    });
     const adapter = createRssSourceAdapter({
       sourceId: "rss:slow",
       feedUrl: "https://example.com/feed",
-      fetch: vi.fn().mockResolvedValue(new Response(neverEndingBody, { headers: { "content-type": "text/xml" } })),
+      fetch: vi
+        .fn()
+        .mockResolvedValue(
+          new Response(neverEndingBody, { headers: { "content-type": "text/xml" } }),
+        ),
       deadlineMs: 1,
       now: () => "2026-08-28T12:00:00.000Z",
     });
@@ -141,16 +169,45 @@ describe("RSS network boundary", () => {
   }, 250);
 
   it("rejects redirect loops, private redirect targets, invalid types, oversized chunks, and deadlines", async () => {
-    const loop = createRssSourceAdapter({ sourceId: "rss:x", feedUrl: "https://example.com/a", fetch: vi.fn().mockResolvedValue(new Response(null, { status: 302, headers: { location: "/a" } })), now: () => "2026-08-28T12:00:00.000Z" });
+    const loop = createRssSourceAdapter({
+      sourceId: "rss:x",
+      feedUrl: "https://example.com/a",
+      fetch: vi
+        .fn()
+        .mockResolvedValue(new Response(null, { status: 302, headers: { location: "/a" } })),
+      now: () => "2026-08-28T12:00:00.000Z",
+    });
     await expect(loop.sync()).rejects.toThrow("redirect");
 
-    const privateHop = createRssSourceAdapter({ sourceId: "rss:x", feedUrl: "https://example.com/a", fetch: vi.fn().mockResolvedValue(new Response(null, { status: 302, headers: { location: "http://127.0.0.1/x" } })), now: () => "2026-08-28T12:00:00.000Z" });
+    const privateHop = createRssSourceAdapter({
+      sourceId: "rss:x",
+      feedUrl: "https://example.com/a",
+      fetch: vi
+        .fn()
+        .mockResolvedValue(
+          new Response(null, { status: 302, headers: { location: "http://127.0.0.1/x" } }),
+        ),
+      now: () => "2026-08-28T12:00:00.000Z",
+    });
     await expect(privateHop.sync()).rejects.toThrow("public");
 
-    const html = createRssSourceAdapter({ sourceId: "rss:x", feedUrl: "https://example.com/a", fetch: vi.fn().mockResolvedValue(chunkedResponse("<html></html>", { "content-type": "text/html" })), now: () => "2026-08-28T12:00:00.000Z" });
+    const html = createRssSourceAdapter({
+      sourceId: "rss:x",
+      feedUrl: "https://example.com/a",
+      fetch: vi
+        .fn()
+        .mockResolvedValue(chunkedResponse("<html></html>", { "content-type": "text/html" })),
+      now: () => "2026-08-28T12:00:00.000Z",
+    });
     await expect(html.sync()).rejects.toThrow("content type");
 
-    const large = createRssSourceAdapter({ sourceId: "rss:x", feedUrl: "https://example.com/a", fetch: vi.fn().mockResolvedValue(chunkedResponse(rss, { "content-type": "text/xml" })), maxBytes: 20, now: () => "2026-08-28T12:00:00.000Z" });
+    const large = createRssSourceAdapter({
+      sourceId: "rss:x",
+      feedUrl: "https://example.com/a",
+      fetch: vi.fn().mockResolvedValue(chunkedResponse(rss, { "content-type": "text/xml" })),
+      maxBytes: 20,
+      now: () => "2026-08-28T12:00:00.000Z",
+    });
     await expect(large.sync()).rejects.toThrow("byte ceiling");
 
     const slowFetch = vi.fn(
@@ -161,7 +218,13 @@ describe("RSS network boundary", () => {
           );
         }),
     );
-    const slow = createRssSourceAdapter({ sourceId: "rss:x", feedUrl: "https://example.com/a", fetch: slowFetch, deadlineMs: 1, now: () => "2026-08-28T12:00:00.000Z" });
+    const slow = createRssSourceAdapter({
+      sourceId: "rss:x",
+      feedUrl: "https://example.com/a",
+      fetch: slowFetch,
+      deadlineMs: 1,
+      now: () => "2026-08-28T12:00:00.000Z",
+    });
     await expect(slow.sync()).rejects.toThrow(/abort|deadline/i);
   });
 });

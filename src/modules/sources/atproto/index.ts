@@ -41,17 +41,24 @@ export class OmittedAtprotoRecordError extends Error {
   }
 }
 
-export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapter & BootstrapEvidenceProvider & {
-  tryHydrate(ref: string): Promise<ContentEnvelope | AtprotoOmission>;
-} {
+export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapter &
+  BootstrapEvidenceProvider & {
+    tryHydrate(ref: string): Promise<ContentEnvelope | AtprotoOmission>;
+  } {
   const sourceId = options.sourceId ?? "atproto";
   const now = options.now ?? (() => new Date().toISOString());
 
   const tryHydrate = async (ref: string): Promise<ContentEnvelope | AtprotoOmission> => {
-    const response = await options.client.get("app.bsky.feed.getPosts", { params: { uris: [ref] } });
+    const response = await options.client.get("app.bsky.feed.getPosts", {
+      params: { uris: [ref] },
+    });
     const posts = response.ok ? object(response.data)?.posts : undefined;
     const post = array(posts)[0];
-    return normalizePost(post, { sourceId, capturedAt: validTimestamp(now()), safetyLabels: options.safetyLabels });
+    return normalizePost(post, {
+      sourceId,
+      capturedAt: validTimestamp(now()),
+      safetyLabels: options.safetyLabels,
+    });
   };
 
   return {
@@ -68,7 +75,13 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
       const feed = response.ok && Array.isArray(data?.feed) ? data.feed : [];
       const items = feed
         .map((entry) => object(entry)?.post)
-        .map((post) => normalizePost(post, { sourceId, capturedAt: validTimestamp(now()), safetyLabels: options.safetyLabels }))
+        .map((post) =>
+          normalizePost(post, {
+            sourceId,
+            capturedAt: validTimestamp(now()),
+            safetyLabels: options.safetyLabels,
+          }),
+        )
         .filter((entry): entry is ContentEnvelope => !isOmission(entry));
       const nextCursor = string(data?.cursor);
       return nextCursor ? { items, nextCursor } : { items };
@@ -77,10 +90,18 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
     async evidenceFor(ownerId) {
       if (ownerId !== options.ownerDid) return [];
       const [follows, likes, packs, authored] = await Promise.all([
-        options.client.get("app.bsky.graph.getFollows", { params: { actor: options.ownerDid, limit: 100 } }),
-        options.client.get("app.bsky.feed.getActorLikes", { params: { actor: options.ownerDid, limit: 100 } }),
-        options.client.get("app.bsky.graph.getActorStarterPacks", { params: { actor: options.ownerDid, limit: 100 } }),
-        options.client.get("app.bsky.feed.getAuthorFeed", { params: { actor: options.ownerDid, limit: 100 } }),
+        options.client.get("app.bsky.graph.getFollows", {
+          params: { actor: options.ownerDid, limit: 100 },
+        }),
+        options.client.get("app.bsky.feed.getActorLikes", {
+          params: { actor: options.ownerDid, limit: 100 },
+        }),
+        options.client.get("app.bsky.graph.getActorStarterPacks", {
+          params: { actor: options.ownerDid, limit: 100 },
+        }),
+        options.client.get("app.bsky.feed.getAuthorFeed", {
+          params: { actor: options.ownerDid, limit: 100 },
+        }),
       ]);
       const observedAt = validTimestamp(now());
       const evidence: Evidence[] = [];
@@ -90,15 +111,18 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
       }
       for (const entry of array(object(likes.data)?.feed)) {
         const uri = string(object(object(entry)?.post)?.uri);
-        if (isCanonicalAtUri(uri)) addEvidence(evidence, evidenceFor(sourceId, uri, observedAt, "like"));
+        if (isCanonicalAtUri(uri))
+          addEvidence(evidence, evidenceFor(sourceId, uri, observedAt, "like"));
       }
       for (const pack of array(object(packs.data)?.starterPacks)) {
         const uri = string(object(pack)?.uri);
-        if (isCanonicalAtUri(uri)) addEvidence(evidence, evidenceFor(sourceId, uri, observedAt, "starter-pack"));
+        if (isCanonicalAtUri(uri))
+          addEvidence(evidence, evidenceFor(sourceId, uri, observedAt, "starter-pack"));
       }
       for (const entry of array(object(authored.data)?.feed)) {
         const uri = string(object(object(entry)?.post)?.uri);
-        if (isCanonicalAtUri(uri)) addEvidence(evidence, evidenceFor(sourceId, uri, observedAt, "authored"));
+        if (isCanonicalAtUri(uri))
+          addEvidence(evidence, evidenceFor(sourceId, uri, observedAt, "authored"));
       }
       return evidence;
     },
@@ -126,14 +150,17 @@ function normalizePost(
   if (!post) return { kind: "omitted", reason: "missing" };
   const uri = string(post.uri);
   if (!isCanonicalAtUri(uri)) return { kind: "omitted", reason: "invalid", canonicalUri: uri };
-  if (post.notFound === true || post.deleted === true) return { kind: "omitted", reason: "deleted", canonicalUri: uri };
+  if (post.notFound === true || post.deleted === true)
+    return { kind: "omitted", reason: "deleted", canonicalUri: uri };
   const author = object(post.author);
   const viewer = object(author?.viewer);
   if (post.blocked === true || viewer?.blocking || viewer?.blockedBy) {
     return { kind: "omitted", reason: "blocked", canonicalUri: uri };
   }
   if (viewer?.muted) return { kind: "omitted", reason: "muted", canonicalUri: uri };
-  const labels = array(post.labels).flatMap((label) => labelValue(label, options.sourceId, options.capturedAt));
+  const labels = array(post.labels).flatMap((label) =>
+    labelValue(label, options.sourceId, options.capturedAt),
+  );
   if (labels.some((label) => options.safetyLabels.has(label.value))) {
     return { kind: "omitted", reason: "labelled", canonicalUri: uri };
   }
@@ -141,12 +168,22 @@ function normalizePost(
   const text = string(record?.text) ?? "";
   const blocks = text ? [{ kind: "paragraph" as const, text }] : [];
   const media: ContentEnvelope["media"] = [];
-  addEmbed(object(post.embed), blocks, media, options.sourceId, options.capturedAt, options.safetyLabels);
+  addEmbed(
+    object(post.embed),
+    blocks,
+    media,
+    options.sourceId,
+    options.capturedAt,
+    options.safetyLabels,
+  );
   const candidate = {
     id: uri,
     canonicalUri: uri,
     sourceId: options.sourceId,
-    publishedAt: validTimestamp(string(record?.createdAt), validTimestamp(string(post.indexedAt), options.capturedAt)),
+    publishedAt: validTimestamp(
+      string(record?.createdAt),
+      validTimestamp(string(post.indexedAt), options.capturedAt),
+    ),
     capturedAt: options.capturedAt,
     blocks,
     media,
@@ -172,7 +209,13 @@ function addEmbed(
   }
   if (type.includes("video")) {
     const playlist = safeHttpUrl(string(embed.playlist));
-    if (playlist) media.push({ id: playlist, kind: "video", url: playlist, provenance: { source: sourceId, observedAt } });
+    if (playlist)
+      media.push({
+        id: playlist,
+        kind: "video",
+        url: playlist,
+        provenance: { source: sourceId, observedAt },
+      });
   }
   if (type.includes("external")) {
     const external = object(embed.external);
@@ -187,20 +230,42 @@ function addEmbed(
       const value = object(nested?.value);
       const author = object(nested?.author);
       const quoted = string(value?.text);
-      if (quoted) blocks.push({ kind: "quote", text: quoted, attribution: string(author?.displayName) ?? string(author?.handle) });
+      if (quoted)
+        blocks.push({
+          kind: "quote",
+          text: quoted,
+          attribution: string(author?.displayName) ?? string(author?.handle),
+        });
     }
   }
-  if (type.includes("recordWithMedia")) addEmbed(object(embed.media), blocks, media, sourceId, observedAt, safetyLabels);
+  if (type.includes("recordWithMedia"))
+    addEmbed(object(embed.media), blocks, media, sourceId, observedAt, safetyLabels);
 }
 
-function addImage(input: unknown, media: ContentEnvelope["media"], sourceId: string, observedAt: string): void {
+function addImage(
+  input: unknown,
+  media: ContentEnvelope["media"],
+  sourceId: string,
+  observedAt: string,
+): void {
   const image = object(input);
   const url = safeHttpUrl(string(image?.fullsize) ?? string(image?.thumb));
   if (!url) return;
-  media.push({ id: url, kind: "image", url, alt: string(image?.alt) ?? "", provenance: { source: sourceId, observedAt } });
+  media.push({
+    id: url,
+    kind: "image",
+    url,
+    alt: string(image?.alt) ?? "",
+    provenance: { source: sourceId, observedAt },
+  });
 }
 
-function evidenceFor(sourceId: string, subjectUri: string, observedAt: string, kind: string): Evidence {
+function evidenceFor(
+  sourceId: string,
+  subjectUri: string,
+  observedAt: string,
+  kind: string,
+): Evidence {
   const provenance = isCanonicalAtUri(subjectUri)
     ? { source: sourceId, observedAt, reference: subjectUri }
     : { source: sourceId, observedAt };
@@ -217,15 +282,25 @@ function addEvidence(items: Evidence[], candidate: Evidence): void {
   if (parsed.success) items.push(parsed.data);
 }
 
-function labelValue(input: unknown, sourceId: string, observedAt: string): ContentEnvelope["labels"] {
+function labelValue(
+  input: unknown,
+  sourceId: string,
+  observedAt: string,
+): ContentEnvelope["labels"] {
   const label = object(input);
   const value = string(label?.val);
   const reference = safeReference(string(label?.uri));
-  return value ? [{ value, provenance: { source: sourceId, observedAt, ...(reference ? { reference } : {}) } }] : [];
+  return value
+    ? [{ value, provenance: { source: sourceId, observedAt, ...(reference ? { reference } : {}) } }]
+    : [];
 }
 
-function nestedOmitted(record: Record<string, unknown> | undefined, safetyLabels: ReadonlySet<string>): boolean {
-  if (!record || record.blocked === true || record.notFound === true || record.deleted === true) return true;
+function nestedOmitted(
+  record: Record<string, unknown> | undefined,
+  safetyLabels: ReadonlySet<string>,
+): boolean {
+  if (!record || record.blocked === true || record.notFound === true || record.deleted === true)
+    return true;
   const viewer = object(object(record.author)?.viewer);
   if (viewer?.blocking || viewer?.blockedBy || viewer?.muted) return true;
   return array(record.labels).some((label) => {
@@ -235,7 +310,11 @@ function nestedOmitted(record: Record<string, unknown> | undefined, safetyLabels
 }
 
 function validTimestamp(value: string | undefined, fallback = new Date().toISOString()): string {
-  if (value && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value))) {
+  if (
+    value &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+    Number.isFinite(Date.parse(value))
+  ) {
     return value;
   }
   return fallback;
@@ -256,7 +335,10 @@ function safeHttpUrl(value: string | undefined): string | undefined {
 }
 
 function isCanonicalAtUri(value: string | undefined): value is string {
-  return Boolean(value && /^at:\/\/did:[a-z0-9]+:[a-zA-Z0-9._:%-]+\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._~-]+$/.test(value));
+  return Boolean(
+    value &&
+    /^at:\/\/did:[a-z0-9]+:[a-zA-Z0-9._:%-]+\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._~-]+$/.test(value),
+  );
 }
 
 function isOmission(value: ContentEnvelope | AtprotoOmission): value is AtprotoOmission {
@@ -264,7 +346,9 @@ function isOmission(value: ContentEnvelope | AtprotoOmission): value is AtprotoO
 }
 
 function object(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function array(value: unknown): unknown[] {

@@ -17,10 +17,16 @@ class InMemorySyncRepository {
   }
 
   async isKnownContent(input: Pick<ContentEnvelope, "id" | "canonicalUri">): Promise<boolean> {
-    return this.stored.some((item) => item.id === input.id || item.canonicalUri === input.canonicalUri);
+    return this.stored.some(
+      (item) => item.id === input.id || item.canonicalUri === input.canonicalUri,
+    );
   }
 
-  async commitSync(input: { sourceId: string; items: ContentEnvelope[]; nextCursor?: string }): Promise<void> {
+  async commitSync(input: {
+    sourceId: string;
+    items: ContentEnvelope[];
+    nextCursor?: string;
+  }): Promise<void> {
     this.stored.push(...input.items);
     this.cursor = input.nextCursor;
     this.commits.push({ items: input.items, nextCursor: input.nextCursor });
@@ -31,8 +37,16 @@ describe("RSS repository-facing synchronization", () => {
   it("persists each stable/canonical item once while reusing its saved validators", async () => {
     const fetch = vi
       .fn()
-      .mockResolvedValueOnce(new Response(feed("first"), { headers: { "content-type": "application/rss+xml", etag: '"v1"' } }))
-      .mockResolvedValueOnce(new Response(feed("renamed-guid"), { headers: { "content-type": "application/rss+xml", etag: '"v2"' } }));
+      .mockResolvedValueOnce(
+        new Response(feed("first"), {
+          headers: { "content-type": "application/rss+xml", etag: '"v1"' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(feed("renamed-guid"), {
+          headers: { "content-type": "application/rss+xml", etag: '"v2"' },
+        }),
+      );
     const repository = new InMemorySyncRepository();
     const adapter = createRssSourceAdapter({
       sourceId: "rss:stored",
@@ -49,7 +63,10 @@ describe("RSS repository-facing synchronization", () => {
     expect(second.items).toEqual([]);
     expect(repository.stored.map((item) => item.id)).toEqual(["rss:stored:first"]);
     expect(repository.commits).toEqual([
-      { items: [expect.objectContaining({ id: "rss:stored:first" })], nextCursor: '{"etag":"\\"v1\\""}' },
+      {
+        items: [expect.objectContaining({ id: "rss:stored:first" })],
+        nextCursor: '{"etag":"\\"v1\\""}',
+      },
       { items: [], nextCursor: '{"etag":"\\"v2\\""}' },
     ]);
     expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get("if-none-match")).toBe('"v1"');

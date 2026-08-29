@@ -7,8 +7,21 @@ import ipaddr from "ipaddr.js";
 import type { QueueMessage, SafeBlock } from "../../contracts";
 
 const executableSchemes = new Set(["data:", "javascript:", "vbscript:"]);
-const ignoredTags = new Set(["script", "style", "iframe", "form", "object", "embed", "svg", "math"]);
-const opmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", trimValues: true });
+const ignoredTags = new Set([
+  "script",
+  "style",
+  "iframe",
+  "form",
+  "object",
+  "embed",
+  "svg",
+  "math",
+]);
+const opmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  trimValues: true,
+});
 
 function compactText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -32,7 +45,8 @@ function textOf(nodes: AnyNode[]): string {
     nodes
       .map((node) => {
         if (node.type === ElementType.Text) return node.data;
-        if (node.type === ElementType.Tag && !ignoredTags.has(node.name.toLowerCase())) return textOf(node.children);
+        if (node.type === ElementType.Tag && !ignoredTags.has(node.name.toLowerCase()))
+          return textOf(node.children);
         return "";
       })
       .join(" "),
@@ -84,7 +98,10 @@ function toBlocks(nodes: AnyNode[], baseUrl: string): SafeBlock[] {
     if (tag === "p" || tag === "div" || tag === "li" || tag === "article" || tag === "section") {
       if (text) blocks.push({ kind: "paragraph", text });
       for (const child of node.children) {
-        if (child.type === ElementType.Tag && ["a", "img", "audio", "video"].includes(child.name.toLowerCase())) {
+        if (
+          child.type === ElementType.Tag &&
+          ["a", "img", "audio", "video"].includes(child.name.toLowerCase())
+        ) {
           blocks.push(...toBlocks([child], baseUrl));
         }
       }
@@ -104,7 +121,8 @@ export function normalizeContentHtml(value: string | undefined, baseUrl: string)
 
 export function canonicalizeUrl(value: string, baseUrl?: string): string {
   const url = new URL(value, baseUrl);
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Expected an HTTP(S) URL");
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    throw new Error("Expected an HTTP(S) URL");
   if (url.username || url.password) throw new Error("URL credentials are not allowed");
   url.hash = "";
   return url.toString();
@@ -126,15 +144,25 @@ function isLocalAlias(hostname: string): boolean {
     .map((suffix) => (host.endsWith(suffix) ? host.slice(0, -suffix.length) : undefined))
     .find((candidate): candidate is string => candidate !== undefined);
   if (encodedIpv4 && isPublicIpLiteral(encodedIpv4) === false) return true;
-  return host === "localhost" || host.endsWith(".localhost") || host === "localhost.localdomain" ||
-    host.endsWith(".localhost.localdomain") || host === "localtest.me" || host.endsWith(".localtest.me") ||
-    host === "lvh.me" || host.endsWith(".lvh.me") || host.endsWith(".local") || host.endsWith(".internal");
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "localhost.localdomain" ||
+    host.endsWith(".localhost.localdomain") ||
+    host === "localtest.me" ||
+    host.endsWith(".localtest.me") ||
+    host === "lvh.me" ||
+    host.endsWith(".lvh.me") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal")
+  );
 }
 
 /** Syntax-only public URL policy shared by subscription import and feed fetching. */
 export function validatePublicHttpUrl(value: string, baseUrl?: string): string {
   const url = new URL(value, baseUrl);
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Feed URL must use HTTP(S)");
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    throw new Error("Feed URL must use HTTP(S)");
   if (url.username || url.password) throw new Error("Feed URL credentials are not allowed");
   if (isLocalAlias(url.hostname) || isPublicIpLiteral(url.hostname) === false) {
     throw new Error("Feed URL must target a public host");
@@ -172,7 +200,10 @@ function outlines(value: unknown): Record<string, unknown>[] {
 export function importOpml(source: string, options: { maxBytes?: number } = {}): OpmlImportResult {
   const size = new TextEncoder().encode(source).byteLength;
   if (size > (options.maxBytes ?? 1024 * 1024)) throw new Error("OPML exceeded byte ceiling");
-  if (XMLValidator.validate(source) !== true || /<(?:script|style|iframe|form|object|embed)\b/i.test(source)) {
+  if (
+    XMLValidator.validate(source) !== true ||
+    /<(?:script|style|iframe|form|object|embed)\b/i.test(source)
+  ) {
     throw new Error("OPML is not safe XML");
   }
   const document = opmlParser.parse(source) as Record<string, unknown>;
@@ -196,16 +227,26 @@ export function importOpml(source: string, options: { maxBytes?: number } = {}):
       if (seen.has(url)) continue;
       seen.add(url);
       const candidateTitle = outline["@_title"] ?? outline["@_text"];
-      subscriptions.push({ title: typeof candidateTitle === "string" ? candidateTitle.trim() || url : url, url });
+      subscriptions.push({
+        title: typeof candidateTitle === "string" ? candidateTitle.trim() || url : url,
+        url,
+      });
     } catch (error) {
-      rejected.push({ url: candidate, reason: error instanceof Error ? error.message : "Invalid feed URL" });
+      rejected.push({
+        url: candidate,
+        reason: error instanceof Error ? error.message : "Invalid feed URL",
+      });
     }
   }
   return { subscriptions, rejected };
 }
 
 function xmlEscape(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 export function exportOpml(subscriptions: Subscription[]): string {
@@ -219,9 +260,12 @@ export function exportOpml(subscriptions: Subscription[]): string {
   const normalized = [...unique.values()].sort(
     (left, right) => left.url.localeCompare(right.url) || left.title.localeCompare(right.title),
   );
-  const outlines = normalized.map((subscription) =>
-    `    <outline text="${xmlEscape(subscription.title)}" xmlUrl="${xmlEscape(subscription.url)}" />`,
-  ).join("\n");
+  const outlines = normalized
+    .map(
+      (subscription) =>
+        `    <outline text="${xmlEscape(subscription.title)}" xmlUrl="${xmlEscape(subscription.url)}" />`,
+    )
+    .join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <body>\n${outlines}\n  </body>\n</opml>\n`;
 }
 

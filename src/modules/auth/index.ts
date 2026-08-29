@@ -45,7 +45,9 @@ export interface OwnerSessionStore {
 
 interface OAuthFlow {
   readonly metadata: Record<string, unknown>;
-  authorize(input: { target: { type: "account"; identifier: ActorIdentifier } }): Promise<AuthorizationResult>;
+  authorize(input: {
+    target: { type: "account"; identifier: ActorIdentifier };
+  }): Promise<AuthorizationResult>;
   callback(params: URLSearchParams): Promise<CallbackResult>;
   restore(did: string): Promise<OAuthSession>;
   revoke(did: string): Promise<void>;
@@ -120,7 +122,9 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
         } finally {
           await options.session.deleteOAuthSession({ did: callback.session.did });
         }
-        return new Response("This application is restricted to its configured owner", { status: 403 });
+        return new Response("This application is restricted to its configured owner", {
+          status: 403,
+        });
       }
       const token = randomToken();
       const tokenHash = await hashAppSessionToken(token);
@@ -146,7 +150,11 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
       const inspectedAt = now();
       const app = await options.session.readAppSession({ tokenHash, now: inspectedAt });
       if (app?.did !== options.ownerDid) return undefined;
-      await options.session.touchAppSession({ tokenHash, now: inspectedAt, idleExpiresAt: inspectedAt + IDLE_MS });
+      await options.session.touchAppSession({
+        tokenHash,
+        now: inspectedAt,
+        idleExpiresAt: inspectedAt + IDLE_MS,
+      });
       return { did: app.did };
     },
     async restore(request: Request): Promise<OAuthSession | undefined> {
@@ -156,8 +164,12 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
     async logout(request: Request): Promise<Response> {
       const token = readCookie(request.headers.get("cookie"), APP_COOKIE);
       const app = await this.inspect(request);
-      if (token) await options.session.deleteAppSession({ tokenHash: await hashAppSessionToken(token) });
-      if (app) await getOAuth().revoke(app.did).catch(() => undefined);
+      if (token)
+        await options.session.deleteAppSession({ tokenHash: await hashAppSessionToken(token) });
+      if (app)
+        await getOAuth()
+          .revoke(app.did)
+          .catch(() => undefined);
       return new Response(null, { status: 204, headers: { "set-cookie": clearCookie() } });
     },
   };
@@ -184,7 +196,8 @@ function createSdkOAuth(input: {
         clear: () => Promise.resolve(),
       },
       sessions: {
-        get: async (did) => (await input.session.getOAuthSession({ did })) as StoredSession | undefined,
+        get: async (did) =>
+          (await input.session.getOAuthSession({ did })) as StoredSession | undefined,
         set: (did, value) => input.session.putOAuthSession({ did, value }),
         delete: (did) => input.session.deleteOAuthSession({ did }),
         clear: () => Promise.resolve(),
@@ -195,7 +208,9 @@ function createSdkOAuth(input: {
         strategy: "http-first",
         methods: {
           http: new WellKnownHandleResolver({ fetch: fetchThis }),
-          dns: { resolve: async () => Promise.reject(new Error("DNS handle resolution is disabled")) },
+          dns: {
+            resolve: async () => Promise.reject(new Error("DNS handle resolution is disabled")),
+          },
         },
       }),
       didDocumentResolver: new CompositeDidDocumentResolver({
@@ -243,8 +258,13 @@ function publicJwk(jwk: ClientAssertionPrivateJwk): Record<string, unknown> {
   throw new TypeError("Unsupported OAuth client JWK type");
 }
 
-function pickPublic(input: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
-  return Object.fromEntries(keys.flatMap((key) => input[key] === undefined ? [] : [[key, input[key]]]));
+function pickPublic(
+  input: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    keys.flatMap((key) => (input[key] === undefined ? [] : [[key, input[key]]])),
+  );
 }
 
 function randomToken(): string {
@@ -275,8 +295,12 @@ function readCookie(header: string | null, name: string): string | undefined {
 }
 
 function safeReturnTo(value: unknown): string {
-  return typeof value === "object" && value !== null && "returnTo" in value &&
-    typeof value.returnTo === "string" && value.returnTo.startsWith("/") && !value.returnTo.startsWith("//")
+  return typeof value === "object" &&
+    value !== null &&
+    "returnTo" in value &&
+    typeof value.returnTo === "string" &&
+    value.returnTo.startsWith("/") &&
+    !value.returnTo.startsWith("//")
     ? value.returnTo
     : "/";
 }

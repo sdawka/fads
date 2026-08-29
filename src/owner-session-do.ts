@@ -102,7 +102,11 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
 
   readAppSession(input: { tokenHash: string; now: number }): Promise<{ did: string } | undefined> {
     const row = Array.from(
-      this.ctx.storage.sql.exec<{ did: string; idle_expires_at: number; absolute_expires_at: number }>(
+      this.ctx.storage.sql.exec<{
+        did: string;
+        idle_expires_at: number;
+        absolute_expires_at: number;
+      }>(
         "SELECT did, idle_expires_at, absolute_expires_at FROM app_sessions WHERE token_hash = ?",
         input.tokenHash,
       ),
@@ -156,7 +160,8 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
         input.name,
       ),
     )[0];
-    if (!lease || lease.holder !== input.holder || lease.expires_at <= input.now) return Promise.resolve(false);
+    if (!lease || lease.holder !== input.holder || lease.expires_at <= input.now)
+      return Promise.resolve(false);
     this.ctx.storage.sql.exec(
       "UPDATE refresh_locks SET expires_at = ? WHERE name = ? AND holder = ?",
       input.now + REFRESH_LEASE_MS,

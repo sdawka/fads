@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { discoverManualFeed, exportOpml, importOpml, planSourceSyncs } from "../../src/modules/content";
+import {
+  discoverManualFeed,
+  exportOpml,
+  importOpml,
+  planSourceSyncs,
+} from "../../src/modules/content";
 
 describe("manual subscriptions and queue planning", () => {
   it("discovers a manual feed only after applying the public URL policy", () => {
@@ -15,7 +20,9 @@ describe("manual subscriptions and queue planning", () => {
       `<?xml version="1.0"?><opml><body><outline text="Signal &amp; Noise" xmlUrl="https://example.com/feed.xml"/><outline text="Local" xmlUrl="http://127.0.0.1/feed"/><outline text="Duplicate" xmlUrl="https://example.com/feed.xml#fragment"/><outline text="No URL"/></body></opml>`,
     );
 
-    expect(result.subscriptions).toEqual([{ title: "Signal & Noise", url: "https://example.com/feed.xml" }]);
+    expect(result.subscriptions).toEqual([
+      { title: "Signal & Noise", url: "https://example.com/feed.xml" },
+    ]);
     expect(result.rejected).toEqual([
       { url: "http://127.0.0.1/feed", reason: "Feed URL must target a public host" },
       { url: "", reason: "Missing xmlUrl" },
@@ -57,8 +64,14 @@ describe("manual subscriptions and queue planning", () => {
     const work = planSourceSyncs(["rss:z", "rss:a", "rss:z"]);
 
     expect(work).toEqual([
-      { message: { version: 1, kind: "sync_source", sourceId: "rss:a" }, idempotencyKey: "v1:sync_source:rss:a" },
-      { message: { version: 1, kind: "sync_source", sourceId: "rss:z" }, idempotencyKey: "v1:sync_source:rss:z" },
+      {
+        message: { version: 1, kind: "sync_source", sourceId: "rss:a" },
+        idempotencyKey: "v1:sync_source:rss:a",
+      },
+      {
+        message: { version: 1, kind: "sync_source", sourceId: "rss:z" },
+        idempotencyKey: "v1:sync_source:rss:z",
+      },
     ]);
     expect(structuredClone(work)).toEqual(work);
   });

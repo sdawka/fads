@@ -4,18 +4,27 @@ import { createAtprotoAuth } from "../../src/modules/auth";
 const ownerDid = "did:plc:owneralice123";
 
 class MemoryOwnerSession {
-  readonly apps = new Map<string, { did: string; idleExpiresAt: number; absoluteExpiresAt: number }>();
+  readonly apps = new Map<
+    string,
+    { did: string; idleExpiresAt: number; absoluteExpiresAt: number }
+  >();
   readonly states = new Map<string, unknown>();
   readonly oauth = new Map<string, unknown>();
   readonly refreshLocks = new Map<string, string>();
 
-  async createAppSession(input: { tokenHash: string; did: string; idleExpiresAt: number; absoluteExpiresAt: number }) {
+  async createAppSession(input: {
+    tokenHash: string;
+    did: string;
+    idleExpiresAt: number;
+    absoluteExpiresAt: number;
+  }) {
     this.apps.set(input.tokenHash, input);
   }
 
   async readAppSession(input: { tokenHash: string; now: number }) {
     const app = this.apps.get(input.tokenHash);
-    if (!app || app.idleExpiresAt <= input.now || app.absoluteExpiresAt <= input.now) return undefined;
+    if (!app || app.idleExpiresAt <= input.now || app.absoluteExpiresAt <= input.now)
+      return undefined;
     return { did: app.did };
   }
 
@@ -25,7 +34,8 @@ class MemoryOwnerSession {
 
   async touchAppSession(input: { tokenHash: string; now: number; idleExpiresAt: number }) {
     const app = this.apps.get(input.tokenHash);
-    if (app && app.absoluteExpiresAt > input.now) app.idleExpiresAt = Math.min(input.idleExpiresAt, app.absoluteExpiresAt);
+    if (app && app.absoluteExpiresAt > input.now)
+      app.idleExpiresAt = Math.min(input.idleExpiresAt, app.absoluteExpiresAt);
   }
 
   async getOAuthState(input: { key: string }) {
@@ -92,9 +102,37 @@ describe("AT Protocol owner authentication", () => {
       ownerDid,
       origin: "https://fads.example",
       privateJwks: [
-        { kty: "EC", crv: "P-256", x: "ec-x", y: "ec-y", d: "ec-private", kid: "ec", q: "unknown-private" },
-        { kty: "OKP", crv: "Ed25519", x: "okp-x", d: "okp-private", k: "symmetric-private", kid: "okp" },
-        { kty: "RSA", n: "rsa-n", e: "AQAB", d: "rsa-private", p: "p", q: "q", dp: "dp", dq: "dq", qi: "qi", oth: [{ d: "nested" }], kid: "rsa", extra: "unknown" },
+        {
+          kty: "EC",
+          crv: "P-256",
+          x: "ec-x",
+          y: "ec-y",
+          d: "ec-private",
+          kid: "ec",
+          q: "unknown-private",
+        },
+        {
+          kty: "OKP",
+          crv: "Ed25519",
+          x: "okp-x",
+          d: "okp-private",
+          k: "symmetric-private",
+          kid: "okp",
+        },
+        {
+          kty: "RSA",
+          n: "rsa-n",
+          e: "AQAB",
+          d: "rsa-private",
+          p: "p",
+          q: "q",
+          dp: "dp",
+          dq: "dq",
+          qi: "qi",
+          oth: [{ d: "nested" }],
+          kid: "rsa",
+          extra: "unknown",
+        },
       ] as never,
       session: new MemoryOwnerSession(),
     });
@@ -121,17 +159,24 @@ describe("AT Protocol owner authentication", () => {
       now: () => timestamp,
       oauthFactory: () => ({
         metadata: {},
-        authorize: async () => ({ url: new URL("https://pds.example/authorize"), stateId: "state" }),
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
+        }),
         callback: async () => ({ session: { did: ownerDid }, state: {} }) as never,
         restore: async () => ({ did: ownerDid }) as never,
         revoke: async () => undefined,
       }),
     });
-    const callback = await auth.callback(new Request("https://fads.example/oauth/callback?code=code&state=state"));
+    const callback = await auth.callback(
+      new Request("https://fads.example/oauth/callback?code=code&state=state"),
+    );
     const cookie = callback.headers.get("set-cookie")?.split(";")[0];
     timestamp += 8 * 60 * 60 * 1000;
 
-    await expect(auth.inspect(new Request("https://fads.example", { headers: { cookie } }))).resolves.toBeUndefined();
+    await expect(
+      auth.inspect(new Request("https://fads.example", { headers: { cookie } })),
+    ).resolves.toBeUndefined();
   });
 
   it("rejects a non-owner callback without creating an app session", async () => {
@@ -144,7 +189,10 @@ describe("AT Protocol owner authentication", () => {
       session,
       oauthFactory: () => ({
         metadata: {},
-        authorize: async () => ({ url: new URL("https://pds.example/authorize"), stateId: "state" }),
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
+        }),
         callback: async () => ({ session: { did: "did:plc:someoneelse" }, state: {} }) as never,
         restore: async () => ({ did: ownerDid }) as never,
         revoke: async () => {
@@ -153,7 +201,9 @@ describe("AT Protocol owner authentication", () => {
       }),
     });
 
-    const response = await auth.callback(new Request("https://fads.example/oauth/callback?code=code&state=state"));
+    const response = await auth.callback(
+      new Request("https://fads.example/oauth/callback?code=code&state=state"),
+    );
 
     expect(response.status).toBe(403);
     expect(revoked).toBe(true);
@@ -170,7 +220,10 @@ describe("AT Protocol owner authentication", () => {
       session,
       oauthFactory: () => ({
         metadata: {},
-        authorize: async () => ({ url: new URL("https://pds.example/authorize"), stateId: "state" }),
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
+        }),
         callback: async () => {
           await session.putOAuthSession({ did: wrongDid, value: { refresh_token: "secret" } });
           return { session: { did: wrongDid }, state: {} } as never;
@@ -182,7 +235,9 @@ describe("AT Protocol owner authentication", () => {
       }),
     });
 
-    const response = await auth.callback(new Request("https://fads.example/oauth/callback?code=code&state=state"));
+    const response = await auth.callback(
+      new Request("https://fads.example/oauth/callback?code=code&state=state"),
+    );
 
     expect(response.status).toBe(403);
     expect(session.apps.size).toBe(0);
@@ -199,10 +254,14 @@ describe("AT Protocol owner authentication", () => {
       session,
       oauthFactory: () => ({
         metadata: {},
-        authorize: async () => ({ url: new URL("https://pds.example/authorize"), stateId: "state" }),
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
+        }),
         callback: async (params) => {
           const state = params.get("state");
-          if (!state || !await session.getOAuthState({ key: state })) throw new Error("replayed state");
+          if (!state || !(await session.getOAuthState({ key: state })))
+            throw new Error("replayed state");
           return { session: { did: ownerDid }, state: {} } as never;
         },
         restore: async () => ({ did: ownerDid }) as never,
@@ -215,7 +274,9 @@ describe("AT Protocol owner authentication", () => {
     const replay = await auth.callback(request);
 
     expect(first.status).toBe(302);
-    expect(first.headers.get("set-cookie")).toMatch(/^fads_session=[A-Za-z0-9_-]{43}; HttpOnly; Secure; SameSite=Lax; Path=\/; Max-Age=604800$/);
+    expect(first.headers.get("set-cookie")).toMatch(
+      /^fads_session=[A-Za-z0-9_-]{43}; HttpOnly; Secure; SameSite=Lax; Path=\/; Max-Age=604800$/,
+    );
     expect(replay.status).toBe(400);
     expect(session.apps.size).toBe(1);
   });
@@ -229,7 +290,10 @@ describe("AT Protocol owner authentication", () => {
       session,
       oauthFactory: () => ({
         metadata: {},
-        authorize: async () => ({ url: new URL("https://pds.example/authorize"), stateId: "state" }),
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
+        }),
         callback: async () => ({ session: { did: ownerDid }, state: {} }) as never,
         restore: async () => ({ did: ownerDid }) as never,
         revoke: async () => {
@@ -237,14 +301,22 @@ describe("AT Protocol owner authentication", () => {
         },
       }),
     });
-    const callback = await auth.callback(new Request("https://fads.example/oauth/callback?code=code&state=state"));
+    const callback = await auth.callback(
+      new Request("https://fads.example/oauth/callback?code=code&state=state"),
+    );
     const cookie = callback.headers.get("set-cookie")?.split(";")[0] ?? "";
 
-    const response = await auth.logout(new Request("https://fads.example/logout", { headers: { cookie } }));
+    const response = await auth.logout(
+      new Request("https://fads.example/logout", { headers: { cookie } }),
+    );
 
     expect(response.status).toBe(204);
-    expect(response.headers.get("set-cookie")).toBe("fads_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0");
-    await expect(auth.inspect(new Request("https://fads.example", { headers: { cookie } }))).resolves.toBeUndefined();
+    expect(response.headers.get("set-cookie")).toBe(
+      "fads_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+    );
+    await expect(
+      auth.inspect(new Request("https://fads.example", { headers: { cookie } })),
+    ).resolves.toBeUndefined();
   });
 
   it("extends an active session's bounded idle expiry without extending its absolute expiry", async () => {
@@ -258,19 +330,28 @@ describe("AT Protocol owner authentication", () => {
       now: () => timestamp,
       oauthFactory: () => ({
         metadata: {},
-        authorize: async () => ({ url: new URL("https://pds.example/authorize"), stateId: "state" }),
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
+        }),
         callback: async () => ({ session: { did: ownerDid }, state: {} }) as never,
         restore: async () => ({ did: ownerDid }) as never,
         revoke: async () => undefined,
       }),
     });
-    const callback = await auth.callback(new Request("https://fads.example/oauth/callback?code=code&state=state"));
+    const callback = await auth.callback(
+      new Request("https://fads.example/oauth/callback?code=code&state=state"),
+    );
     const cookie = callback.headers.get("set-cookie")?.split(";")[0] ?? "";
 
     timestamp += 7 * 60 * 60 * 1000;
-    await expect(auth.inspect(new Request("https://fads.example", { headers: { cookie } }))).resolves.toEqual({ did: ownerDid });
+    await expect(
+      auth.inspect(new Request("https://fads.example", { headers: { cookie } })),
+    ).resolves.toEqual({ did: ownerDid });
     timestamp += 2 * 60 * 60 * 1000;
-    await expect(auth.inspect(new Request("https://fads.example", { headers: { cookie } }))).resolves.toEqual({ did: ownerDid });
+    await expect(
+      auth.inspect(new Request("https://fads.example", { headers: { cookie } })),
+    ).resolves.toEqual({ did: ownerDid });
   });
 
   it("serializes simultaneous OAuth refreshes through the owner session store", async () => {
@@ -286,26 +367,32 @@ describe("AT Protocol owner authentication", () => {
       session,
       oauthFactory: ({ requestLock }) => ({
         metadata: {},
-        authorize: async () => ({ url: new URL("https://pds.example/authorize"), stateId: "state" }),
-        callback: async () => ({ session: { did: ownerDid }, state: {} }) as never,
-        restore: () => requestLock(`oauth-session-${ownerDid}`, async () => {
-          activeRefreshes += 1;
-          maxActiveRefreshes = Math.max(maxActiveRefreshes, activeRefreshes);
-          try {
-            if (!refreshed) {
-              refreshes += 1;
-              await new Promise((resolve) => setTimeout(resolve, 10));
-              refreshed = true;
-            }
-            return { did: ownerDid } as never;
-          } finally {
-            activeRefreshes -= 1;
-          }
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
         }),
+        callback: async () => ({ session: { did: ownerDid }, state: {} }) as never,
+        restore: () =>
+          requestLock(`oauth-session-${ownerDid}`, async () => {
+            activeRefreshes += 1;
+            maxActiveRefreshes = Math.max(maxActiveRefreshes, activeRefreshes);
+            try {
+              if (!refreshed) {
+                refreshes += 1;
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                refreshed = true;
+              }
+              return { did: ownerDid } as never;
+            } finally {
+              activeRefreshes -= 1;
+            }
+          }),
         revoke: async () => undefined,
       }),
     });
-    const callback = await auth.callback(new Request("https://fads.example/oauth/callback?code=code&state=state"));
+    const callback = await auth.callback(
+      new Request("https://fads.example/oauth/callback?code=code&state=state"),
+    );
     const cookie = callback.headers.get("set-cookie")?.split(";")[0] ?? "";
     const request = new Request("https://fads.example", { headers: { cookie } });
 

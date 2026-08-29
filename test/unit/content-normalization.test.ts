@@ -17,7 +17,10 @@ describe("content normalization", () => {
 
   it("does not preserve executable media URL schemes", () => {
     expect(
-      normalizeContentHtml('<img src="data:text/html,evil" alt="nope"><img src="/art.jpg" alt="Cover">', "https://example.com/feed.xml"),
+      normalizeContentHtml(
+        '<img src="data:text/html,evil" alt="nope"><img src="/art.jpg" alt="Cover">',
+        "https://example.com/feed.xml",
+      ),
     ).toEqual([{ kind: "image", src: "https://example.com/art.jpg", alt: "Cover" }]);
   });
 });
