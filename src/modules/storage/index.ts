@@ -246,7 +246,11 @@ export interface OwnerDataRepository {
   saveKeep(keep: KeepRecord): Promise<KeepRecord>;
   removeKeep(ownerId: string, contentId: string): Promise<boolean>;
   exportOwnerData(ownerId: string): Promise<OwnerExport>;
-  resetOwnerData(ownerId: string, full: boolean): Promise<void>;
+  resetOwnerData(
+    ownerId: string,
+    full: boolean,
+    preserveIdempotency?: { scope: string; key: string },
+  ): Promise<void>;
   getIdempotentResponse(
     input: IdempotencyLookup,
   ): Promise<{ conflict: true } | { conflict: false; response: Response } | undefined>;
@@ -1100,7 +1104,11 @@ export class D1OwnerDataRepository
     });
   }
 
-  async resetOwnerData(ownerId: string, full: boolean): Promise<void> {
+  async resetOwnerData(
+    ownerId: string,
+    full: boolean,
+    preserveIdempotency?: { scope: string; key: string },
+  ): Promise<void> {
     if (!full) {
       await this.db.batch([
         this.db.prepare("DELETE FROM learned_adjustments WHERE owner_id = ?").bind(ownerId),
@@ -1109,6 +1117,13 @@ export class D1OwnerDataRepository
       ]);
       return;
     }
+    const deleteIdempotency = preserveIdempotency
+      ? this.db
+          .prepare(
+            "DELETE FROM api_idempotency WHERE owner_id = ? AND NOT (scope = ? AND key = ?)",
+          )
+          .bind(ownerId, preserveIdempotency.scope, preserveIdempotency.key)
+      : this.db.prepare("DELETE FROM api_idempotency WHERE owner_id = ?").bind(ownerId);
     await this.db.batch([
       this.db.prepare("DELETE FROM keeps WHERE owner_id = ?").bind(ownerId),
       this.db.prepare("DELETE FROM interactions WHERE owner_id = ?").bind(ownerId),
@@ -1119,7 +1134,7 @@ export class D1OwnerDataRepository
       this.db.prepare("DELETE FROM owner_preferences WHERE owner_id = ?").bind(ownerId),
       this.db.prepare("DELETE FROM owner_muted_sources WHERE owner_id = ?").bind(ownerId),
       this.db.prepare("DELETE FROM content_suppressions WHERE owner_id = ?").bind(ownerId),
-      this.db.prepare("DELETE FROM api_idempotency WHERE owner_id = ?").bind(ownerId),
+      deleteIdempotency,
       this.db
         .prepare(
           "DELETE FROM content_items WHERE source_id IN (SELECT id FROM sources WHERE owner_id = ?)",
@@ -1458,6 +1473,7 @@ export function planStaleSourceSyncs(
         kind: "sync_source",
         ownerId,
         sourceId: source.id,
+        workId: `sync:${ownerId}:${source.id}:${now}`,
       }),
     );
 }
@@ -1466,7 +1482,7 @@ export async function consumeSourceSyncMessage(
   input: unknown,
   sync: (
     message: ReturnType<typeof SyncSourceMessageSchema.parse>,
-  ) => Promise<"processed" | "duplicate" | void>,
+  ) => Promise<"processed" | "duplicate" | "retry" | void>,
 ): Promise<SyncQueueResult> {
   let message: ReturnType<typeof SyncSourceMessageSchema.parse>;
   try {
@@ -1476,7 +1492,10 @@ export async function consumeSourceSyncMessage(
   }
   try {
     const result = await sync(message);
-    return { outcome: result === "duplicate" ? "duplicate" : "processed" };
+    return {
+      outcome:
+        result === "duplicate" ? "duplicate" : result === "retry" ? "retry" : "processed",
+    };
   } catch (error) {
     const status =
       typeof error === "object" && error !== null && "status" in error

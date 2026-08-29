@@ -1,7 +1,13 @@
 import type { AppEnv } from "./app-env";
-import { SyncSourceMessageSchema } from "./contracts";
+import {
+  InterestSuggestionSchema,
+  SyncSourceMessageSchema,
+  type ContentEnvelope,
+  type Evidence,
+} from "./contracts";
 import { loadRuntimeConfig } from "./runtime-config";
 import { createAtprotoAuth, type OwnerSessionStore } from "./modules/auth";
+import { deriveBootstrapSuggestions } from "./modules/curation";
 import { createAtprotoSourceFromSession } from "./modules/sources/atproto";
 import { createRssSourceAdapter, createRssSynchronizer } from "./modules/sources/rss";
 import {
@@ -11,7 +17,31 @@ import {
 } from "./modules/storage";
 
 type SyncSourceMessage = ReturnType<typeof SyncSourceMessageSchema.parse>;
-type SyncResult = "processed" | "duplicate" | void;
+type SyncResult = "processed" | "duplicate" | "retry" | void;
+
+export function buildBootstrapSuggestionRecords(
+  ownerId: string,
+  items: readonly ContentEnvelope[],
+  createdAt: string,
+) {
+  const evidence: Evidence[] = items.map((item) => ({
+    sourceId: item.sourceId,
+    subjectUri: item.canonicalUri,
+    observedAt: item.capturedAt,
+    tags: item.tags,
+  }));
+  return deriveBootstrapSuggestions(evidence).map((suggestion) =>
+    InterestSuggestionSchema.parse({
+      id: `suggestion:${ownerId}:${suggestion.value.toLowerCase()}`,
+      ownerId,
+      value: suggestion.value,
+      evidenceCount: suggestion.evidenceCount,
+      provenance: suggestion.provenance,
+      status: "pending",
+      createdAt,
+    }),
+  );
+}
 
 export interface WorkerHandlerDependencies {
   syncSource(env: AppEnv, message: SyncSourceMessage): Promise<SyncResult>;
@@ -31,7 +61,11 @@ export function createWorkerHandlers(dependencies: WorkerHandlerDependencies) {
     },
 
     async scheduled(controller: ScheduledController, env: AppEnv): Promise<void> {
-      const messages = await dependencies.planScheduled(env, new Date().toISOString());
+      const scheduledTime =
+        typeof controller.scheduledTime === "number" && Number.isFinite(controller.scheduledTime)
+          ? new Date(controller.scheduledTime).toISOString()
+          : new Date().toISOString();
+      const messages = await dependencies.planScheduled(env, scheduledTime);
       if (messages.length) {
         await env.INGESTION_QUEUE.sendBatch(messages.map((body) => ({ body })));
       }
@@ -47,6 +81,16 @@ const productionDependencies: WorkerHandlerDependencies = {
     const repository = new D1OwnerDataRepository(env.DB);
     const source = await repository.getSource(message.ownerId, message.sourceId);
     if (!source) throw statusError(404, "Source not found");
+
+    const claim = await repository.claimSyncWork({
+      ownerId: message.ownerId,
+      sourceId: message.sourceId,
+      fingerprint: message.workId,
+      now: new Date().toISOString(),
+    });
+    if (claim.status === "duplicate") return "duplicate";
+    if (claim.status === "pending") return "retry";
+
     await repository.setSourceStatus(message.ownerId, message.sourceId, {
       status: "syncing",
       updatedAt: new Date().toISOString(),
@@ -69,14 +113,45 @@ const productionDependencies: WorkerHandlerDependencies = {
                 ? { stream: { kind: "feed" as const, uri: source.config.feedUri } }
                 : {}),
             });
-      await createRssSynchronizer({
+      const syncResult = await createRssSynchronizer({
         sourceId: source.id,
         adapter,
         repository: repository.rssSyncRepository(message.ownerId, source.id),
       }).sync();
+      const suggestions = buildBootstrapSuggestionRecords(
+        message.ownerId,
+        syncResult.items,
+        new Date().toISOString(),
+      );
+      if (suggestions.length) {
+        await repository.upsertBootstrapSuggestions(message.ownerId, suggestions);
+      }
+      const completed = await repository.completeSyncWork({
+        ownerId: message.ownerId,
+        sourceId: message.sourceId,
+        fingerprint: message.workId,
+        claimToken: claim.claimToken,
+        outcome: "processed",
+        completedAt: new Date().toISOString(),
+      });
+      if (!completed) throw statusError(503, "Source synchronization claim expired");
       return "processed";
     } catch (error) {
       const normalized = normalizeSyncError(error);
+      if (
+        normalized.status !== 429 &&
+        (normalized.status === undefined || normalized.status < 500)
+      ) {
+        const completed = await repository.completeSyncWork({
+          ownerId: message.ownerId,
+          sourceId: message.sourceId,
+          fingerprint: message.workId,
+          claimToken: claim.claimToken,
+          outcome: "failed",
+          completedAt: new Date().toISOString(),
+        });
+        if (!completed) throw statusError(503, "Source synchronization claim expired");
+      }
       await repository.setSourceStatus(message.ownerId, message.sourceId, {
         status: "error",
         lastError: normalized.message.slice(0, 500),
@@ -118,7 +193,9 @@ function normalizeSyncError(error: unknown): Error & { status?: number } {
     if (Number.isFinite(existing)) return Object.assign(error, { status: existing });
     const responseStatus = /\b(?:status |with )(\d{3})\b/i.exec(error.message)?.[1];
     if (responseStatus) return Object.assign(error, { status: Number(responseStatus) });
-    if (/invalid|unsupported|private|loopback|redirect limit|missing location/i.test(error.message)) {
+    if (
+      /invalid|unsupported|private|loopback|redirect limit|missing location/i.test(error.message)
+    ) {
       return Object.assign(error, { status: 400 });
     }
     return Object.assign(error, { status: 503 });
@@ -128,5 +205,7 @@ function normalizeSyncError(error: unknown): Error & { status?: number } {
 
 const productionHandlers = createWorkerHandlers(productionDependencies);
 
-export const handleQueue = productionHandlers.queue;
-export const handleScheduled = productionHandlers.scheduled;
+export const handleQueue = (batch: MessageBatch<unknown>, env: AppEnv) =>
+  productionHandlers.queue(batch, env);
+export const handleScheduled = (controller: ScheduledController, env: AppEnv) =>
+  productionHandlers.scheduled(controller, env);

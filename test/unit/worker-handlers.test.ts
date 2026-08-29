@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWorkerHandlers } from "../../src/worker-handlers";
+import { buildBootstrapSuggestionRecords, createWorkerHandlers } from "../../src/worker-handlers";
 
 const message = {
   version: 1,
   kind: "sync_source",
   ownerId: "did:plc:owner",
   sourceId: "rss:one",
+  workId: "sync:one",
 } as const;
 
 function queueMessage(body: unknown) {
@@ -13,6 +14,43 @@ function queueMessage(body: unknown) {
 }
 
 describe("Worker ingestion handlers", () => {
+  it("builds deterministic pending bootstrap suggestions from synced content", () => {
+    const records = buildBootstrapSuggestionRecords(
+      "did:plc:owner",
+      [
+        {
+          id: "rss:one:item",
+          canonicalUri: "https://example.com/item",
+          sourceId: "rss:one",
+          publishedAt: "2026-08-28T11:59:00.000Z",
+          capturedAt: "2026-08-28T12:00:00.000Z",
+          blocks: [{ kind: "paragraph", text: "item" }],
+          media: [],
+          tags: [
+            {
+              value: "Systems",
+              provenance: { source: "rss:one", observedAt: "2026-08-28T12:00:00.000Z" },
+            },
+          ],
+          labels: [],
+        },
+      ],
+      "2026-08-28T12:00:00.000Z",
+    );
+
+    expect(records).toEqual([
+      {
+        id: "suggestion:did:plc:owner:systems",
+        ownerId: "did:plc:owner",
+        value: "Systems",
+        evidenceCount: 1,
+        provenance: { source: "rss:one", observedAt: "2026-08-28T12:00:00.000Z" },
+        status: "pending",
+        createdAt: "2026-08-28T12:00:00.000Z",
+      },
+    ]);
+  });
+
   it("acks processed, duplicate, malformed, and permanent work but retries transient work", async () => {
     const inputs = [
       queueMessage({ ...message, sourceId: "rss:processed" }),
@@ -47,12 +85,38 @@ describe("Worker ingestion handlers", () => {
       planScheduled: async () => [message],
     });
 
-    await handlers.scheduled(
-      { noRetry } as never,
-      { INGESTION_QUEUE: { sendBatch } } as never,
-    );
+    await handlers.scheduled({ noRetry } as never, { INGESTION_QUEUE: { sendBatch } } as never);
 
     expect(sendBatch).toHaveBeenCalledWith([{ body: message }]);
     expect(noRetry).toHaveBeenCalledOnce();
+  });
+
+  it("passes the scheduled controller timestamp to planning", async () => {
+    const planScheduled = vi.fn(async () => [message]);
+    const handlers = createWorkerHandlers({
+      syncSource: async () => "processed",
+      planScheduled,
+    });
+    const noRetry = vi.fn();
+
+    await handlers.scheduled(
+      { noRetry, scheduledTime: Date.parse("2026-08-28T12:00:00.000Z") } as never,
+      { INGESTION_QUEUE: { sendBatch: vi.fn(async () => undefined) } } as never,
+    );
+
+    expect(planScheduled).toHaveBeenCalledWith(expect.anything(), "2026-08-28T12:00:00.000Z");
+  });
+
+  it("retries a queue message when its source work claim is still pending", async () => {
+    const input = queueMessage(message);
+    const handlers = createWorkerHandlers({
+      syncSource: async () => "retry",
+      planScheduled: async () => [],
+    });
+
+    await handlers.queue({ messages: [input] } as never, {} as never);
+
+    expect(input.retry).toHaveBeenCalledOnce();
+    expect(input.ack).not.toHaveBeenCalled();
   });
 });

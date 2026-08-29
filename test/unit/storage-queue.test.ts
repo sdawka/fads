@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   consumeSourceSyncMessage,
@@ -34,8 +34,20 @@ describe("source sync work", () => {
         "2026-08-28T12:00:00.000Z",
       ),
     ).toEqual([
-      { version: 1, kind: "sync_source", ownerId: "did:plc:owner", sourceId: "rss:a" },
-      { version: 1, kind: "sync_source", ownerId: "did:plc:owner", sourceId: "rss:z" },
+      {
+        version: 1,
+        kind: "sync_source",
+        ownerId: "did:plc:owner",
+        sourceId: "rss:a",
+        workId: "sync:did:plc:owner:rss:a:2026-08-28T12:00:00.000Z",
+      },
+      {
+        version: 1,
+        kind: "sync_source",
+        ownerId: "did:plc:owner",
+        sourceId: "rss:z",
+        workId: "sync:did:plc:owner:rss:z:2026-08-28T12:00:00.000Z",
+      },
     ]);
   });
 
@@ -45,6 +57,7 @@ describe("source sync work", () => {
       kind: "sync_source",
       ownerId: "did:plc:owner",
       sourceId: "rss:one",
+      workId: "sync:one",
     } as const;
 
     expect(await consumeSourceSyncMessage(message, async () => "duplicate")).toEqual({
@@ -62,6 +75,55 @@ describe("source sync work", () => {
     ).toEqual({ outcome: "failed" });
     expect(await consumeSourceSyncMessage({ version: 2 }, async () => undefined)).toEqual({
       outcome: "failed",
+    });
+  });
+
+  it("acknowledges a duplicate delivery after the first delivery completes", async () => {
+    const sync = vi.fn().mockResolvedValueOnce("processed").mockResolvedValueOnce("duplicate");
+    const message = {
+      version: 1,
+      kind: "sync_source",
+      ownerId: "did:plc:owner",
+      sourceId: "rss:one",
+      workId: "sync:one",
+    } as const;
+
+    await expect(consumeSourceSyncMessage(message, sync)).resolves.toEqual({
+      outcome: "processed",
+    });
+    await expect(consumeSourceSyncMessage(message, sync)).resolves.toEqual({
+      outcome: "duplicate",
+    });
+    expect(sync).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves transient delivery retryable", async () => {
+    const message = {
+      version: 1,
+      kind: "sync_source",
+      ownerId: "did:plc:owner",
+      sourceId: "rss:one",
+      workId: "sync:one",
+    } as const;
+
+    await expect(
+      consumeSourceSyncMessage(message, async () => {
+        throw Object.assign(new Error("upstream unavailable"), { status: 503 });
+      }),
+    ).resolves.toEqual({ outcome: "retry" });
+  });
+
+  it("preserves an explicit retry result from an active work claim", async () => {
+    const message = {
+      version: 1,
+      kind: "sync_source",
+      ownerId: "did:plc:owner",
+      sourceId: "rss:one",
+      workId: "sync:one",
+    } as const;
+
+    await expect(consumeSourceSyncMessage(message, async () => "retry")).resolves.toEqual({
+      outcome: "retry",
     });
   });
 });
