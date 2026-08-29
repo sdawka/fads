@@ -61,7 +61,7 @@ export function loadRuntimeConfig(env: RuntimeEnvironment): RuntimeConfig {
   return {
     ownerDid: ownerDid.data,
     origin,
-    privateJwks: privateJwks.data as unknown as ClientAssertionPrivateJwk[],
+    privateJwks: privateJwks.data,
     safetyLabels: safetyLabels.data,
   };
 }

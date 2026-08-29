@@ -98,7 +98,7 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
   return {
     clientMetadata: () => metadata,
     jwks: () => ({ keys: options.privateJwks.map(publicJwk) }),
-    async start(_request: Request): Promise<Response> {
+    async start(): Promise<Response> {
       const authorization = await getOAuth().authorize({
         target: { type: "account", identifier: options.ownerDid as ActorIdentifier },
       });
