@@ -44,6 +44,8 @@
   let offlinePending = 0;
   let offlineFailed = 0;
   let ownerDid = "";
+  let resetDialog: HTMLDialogElement;
+  let resetConfirmButton: HTMLButtonElement;
 
   let offlineRegistrationPromise: Promise<ServiceWorkerRegistration | undefined> | undefined;
   function ensureOfflineRegistration() {
@@ -359,11 +361,21 @@
     }
   }
 
+  function askForFullReset() {
+    resetDialog.showModal();
+    window.requestAnimationFrame(() => resetConfirmButton.focus());
+  }
+
+  function cancelFullReset() {
+    resetDialog.close();
+  }
+
   async function fullReset() {
-    if (!client || !window.confirm("Erase all private f.ads data? This cannot be undone.")) return;
+    if (!client) return;
     try {
       await client.reset(true);
       await clearOfflineState(offlineRegistration);
+      resetDialog.close();
       statusMessage = "All private data was erased.";
       window.location.assign("/");
     } catch (error) {
@@ -573,11 +585,20 @@
             <section><div><p class="section-number">ALLOWANCES</p><h2>Content labels</h2><p>Excluded labels are hard gates, never ranking hints.</p></div><fieldset><legend class="visually-hidden">Excluded content labels</legend>{#each ["adult", "graphic", "political"] as label}<label><input type="checkbox" checked={preferences.blockedLabels.includes(label)} on:change={async (event) => { if (!client) return; const checkbox = event.currentTarget as HTMLInputElement; const previous = preferences; preferences = { ...preferences, blockedLabels: checkbox.checked ? [...preferences.blockedLabels, label] : preferences.blockedLabels.filter((item) => item !== label) }; try { preferences = await client.savePreferences(preferences); statusMessage = "Allowances saved."; } catch (error) { preferences = previous; checkbox.checked = previous.blockedLabels.includes(label); statusMessage = error instanceof Error ? error.message : "Allowances could not be saved."; } }} /> {label[0].toUpperCase() + label.slice(1)} content</label>{/each}</fieldset></section>
             <section><div><p class="section-number">OFFLINE</p><h2>Active edition only</h2><p>The shell and current edition can resume offline. OAuth, exports, and source data never enter the cache.</p></div><div><p class="connection"><span aria-hidden="true">●</span> {offlineState === "ready" ? "Offline cache active" : offlineState === "checking" ? "Checking offline cache" : "Offline cache unavailable"}</p>{#if offlinePending > 0}<p>{offlinePending} change{offlinePending === 1 ? " is" : "s are"} waiting to sync.</p>{/if}{#if offlineFailed > 0}<p class="notice" role="alert">{offlineFailed} offline change{offlineFailed === 1 ? " needs" : "s need"} attention after the server rejected it.</p>{/if}</div></section>
             <section><div><p class="section-number">PORTABILITY</p><h2>Your private data</h2><p>Download a validated JSON copy whenever you want.</p></div><button class="button quiet" type="button" on:click={downloadExport}>Export my data</button></section>
-            <section class="danger-zone"><div><p class="section-number">RESET</p><h2>Start over carefully</h2><p>Reset learned taste while keeping manual interests, or explicitly erase everything.</p></div><div class="row-actions"><button class="button quiet" type="button" on:click={resetLearnedTaste}>Reset learned taste</button><button class="text-button danger" type="button" on:click={fullReset}>Full reset…</button></div></section>
+            <section class="danger-zone"><div><p class="section-number">RESET</p><h2>Start over carefully</h2><p>Reset learned taste while keeping manual interests, or explicitly erase everything.</p></div><div class="row-actions"><button class="button quiet" type="button" on:click={resetLearnedTaste}>Reset learned taste</button><button class="text-button danger" type="button" on:click={askForFullReset}>Full reset…</button></div></section>
             <section><div><p class="section-number">SESSION</p><h2>Leave this device</h2></div><button class="button primary" type="button" on:click={signOut}>Sign out</button></section>
           </div>
         </section>
       {/if}
     </main>
+    <dialog bind:this={resetDialog} aria-labelledby="reset-dialog-title" on:cancel={cancelFullReset}>
+      <p class="section-number">IRREVERSIBLE RESET</p>
+      <h2 id="reset-dialog-title">Erase all private data?</h2>
+      <p>This removes sources, interests, editions, keeps, reactions, and cached private content. It cannot be undone.</p>
+      <div class="row-actions">
+        <button class="button quiet" type="button" on:click={cancelFullReset}>Cancel</button>
+        <button bind:this={resetConfirmButton} class="button danger-button" type="button" on:click={fullReset}>Erase everything</button>
+      </div>
+    </dialog>
   </div>
 {/if}

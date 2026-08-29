@@ -363,6 +363,33 @@ input[type="range"] {
   font-size: 0.75rem;
 }
 
+dialog {
+  width: min(31rem, calc(100% - 2rem));
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: clamp(1.4rem, 4vw, 2.5rem);
+  color: var(--ink);
+  box-shadow: 0 2rem 7rem rgb(8 9 13 / 35%);
+}
+dialog::backdrop {
+  background: rgb(8 9 13 / 62%);
+}
+dialog h2 {
+  margin: 0.35rem 0 0.8rem;
+  font-family: var(--display);
+  font-size: clamp(1.8rem, 5vw, 2.5rem);
+  font-weight: 500;
+}
+dialog p:not(.section-number) {
+  color: var(--muted);
+  line-height: 1.6;
+}
+.danger-button {
+  border-color: #7a1f1f;
+  background: #7a1f1f;
+  color: white;
+}
+
 .reading-frame {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(16.5rem, 22rem);

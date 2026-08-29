@@ -171,6 +171,33 @@ test("resumes the validated active edition when the private API is offline", asy
   await expect(page.getByRole("status")).toContainText("Offline edition resumed");
 });
 
+test("requires an explicit accessible confirmation before a full reset", async ({ page }) => {
+  let resetBody: unknown;
+  await page.route("**/api/v1/preferences", (route) =>
+    route.fulfill({ json: { preferences: { blockedLabels: [], mutedSourceIds: [] } } }),
+  );
+  await page.route("**/api/v1/reset", async (route) => {
+    resetBody = route.request().postDataJSON();
+    await route.fulfill({ status: 204 });
+  });
+
+  await page.goto("/settings/");
+  await page.getByRole("button", { name: "Full reset…" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Erase all private data?" });
+  await expect(dialog).toBeVisible();
+  expect(resetBody).toBeUndefined();
+  await expect(dialog.getByRole("button", { name: "Erase everything" })).toBeFocused();
+
+  await dialog.getByRole("button", { name: "Erase everything" }).click();
+  await expect
+    .poll(() => resetBody)
+    .toEqual({
+      full: true,
+      confirmation: "DELETE ALL PRIVATE DATA",
+    });
+});
+
 test("keeps mobile reading controls reachable without hiding the trace", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
