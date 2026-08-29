@@ -1,52 +1,8 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import AppShell from "../components/AppShell.svelte";
 ---
 
 <BaseLayout title="f.ads — deliberate reading">
-  <main class="shell">
-    <header class="masthead">
-      <a class="wordmark" href="/" aria-label="f.ads home">f.ads</a>
-      <span class="status">PRIVATE READING SURFACE</span>
-    </header>
-
-    <section class="canvas" aria-labelledby="welcome-title">
-      <div class="intro">
-        <p class="eyebrow">FIRST EDITION</p>
-        <h1 id="welcome-title">A quieter place to follow your curiosity.</h1>
-        <p class="lede">
-          f.ads will assemble a small, explainable edition from sources you choose. The foundation is in
-          place; the first reading flow is next.
-        </p>
-        <a class="concept-link" href="/concept/">Open the original concept deck <span aria-hidden="true">↗</span></a>
-      </div>
-
-      <aside class="trace" aria-label="Decision trace preview">
-        <p class="trace-label">DECISION TRACE</p>
-        <ol>
-          <li><span>01</span> Source allowance</li>
-          <li><span>02</span> Context, not capture</li>
-          <li><span>03</span> A reason to keep</li>
-        </ol>
-      </aside>
-    </section>
-  </main>
+  <AppShell activeSurface="edition" client:load />
 </BaseLayout>
-
-<style>
-  .shell { min-height: 100svh; padding: clamp(1.25rem, 4vw, 4rem); }
-  .masthead { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; max-width: 76rem; margin: 0 auto 1rem; }
-  .wordmark { font-family: var(--display); font-size: 1.6rem; font-weight: 700; letter-spacing: -0.06em; text-decoration: none; }
-  .status, .eyebrow, .trace-label { color: var(--muted); font-family: var(--utility); font-size: 0.67rem; letter-spacing: 0.12em; }
-  .canvas { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 0.36fr); max-width: 76rem; min-height: min(43rem, calc(100svh - 9rem)); margin: 0 auto; background: var(--surface); border: 1px solid color-mix(in oklch, var(--ink) 18%, transparent); box-shadow: 0 1.25rem 4rem rgb(8 9 13 / 14%); }
-  .intro { display: grid; align-content: center; padding: clamp(2rem, 8vw, 8rem); }
-  .eyebrow { margin: 0 0 1.5rem; color: var(--ember); }
-  h1 { max-width: 12ch; margin: 0; font-family: var(--display); font-size: clamp(3rem, 7vw, 7.1rem); font-weight: 400; letter-spacing: -0.065em; line-height: 0.88; }
-  .lede { max-width: 38rem; margin: 2rem 0; color: var(--muted); font-size: 1rem; line-height: 1.6; }
-  .concept-link { width: fit-content; color: var(--ember); font-family: var(--utility); font-size: 0.78rem; letter-spacing: 0.04em; text-underline-offset: 0.3em; }
-  .trace { display: grid; align-content: end; padding: clamp(1.5rem, 3vw, 3rem); background: var(--shell); color: var(--paper); }
-  .trace-label { margin: 0 0 1.4rem; color: color-mix(in oklch, var(--paper) 58%, transparent); }
-  ol { display: grid; gap: 1.2rem; margin: 0; padding: 0; list-style: none; }
-  li { display: grid; grid-template-columns: 2rem 1fr; gap: 0.5rem; border-top: 1px solid rgb(255 255 255 / 16%); padding-top: 0.7rem; font-family: var(--display); font-size: 1.15rem; }
-  li span { color: var(--ember); font-family: var(--utility); font-size: 0.62rem; letter-spacing: 0.08em; }
-  @media (max-width: 42rem) { .masthead { margin-bottom: 0.75rem; } .status { display: none; } .canvas { grid-template-columns: 1fr; min-height: auto; } .intro { min-height: 68svh; } .trace { min-height: 16rem; } }
-</style>

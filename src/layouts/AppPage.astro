@@ -1,0 +1,12 @@
+---
+import type { Surface } from "../components";
+import AppShell from "../components/AppShell.svelte";
+import BaseLayout from "./BaseLayout.astro";
+
+interface Props { surface: Surface; title: string; }
+const { surface, title } = Astro.props;
+---
+
+<BaseLayout title={`${title} — f.ads`}>
+  <AppShell activeSurface={surface} client:load />
+</BaseLayout>
