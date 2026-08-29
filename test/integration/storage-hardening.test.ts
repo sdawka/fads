@@ -327,6 +327,54 @@ describe("hardened owner storage", () => {
     expect((await repository.getPreferences(OWNER)).mutedSourceIds).toEqual([]);
   });
 
+  it("preserves only the in-flight full-reset claim so its response can be replayed", async () => {
+    const repository = new D1OwnerDataRepository(env.DB);
+    const expiresAt = "2026-08-28T13:00:00.000Z";
+    const preserved = await repository.claimIdempotency({
+      ownerId: OWNER,
+      scope: "POST /api/v1/reset",
+      key: "reset-key",
+      requestHash: "reset-hash",
+      now: AT,
+      expiresAt,
+      claimToken: "reset-claim",
+    });
+    const stale = await repository.claimIdempotency({
+      ownerId: OWNER,
+      scope: "POST /api/v1/interactions",
+      key: "old-key",
+      requestHash: "old-hash",
+      now: AT,
+      expiresAt,
+      claimToken: "old-claim",
+    });
+    expect(preserved.status).toBe("claimed");
+    expect(stale.status).toBe("claimed");
+
+    await repository.resetOwnerData(OWNER, true, {
+      scope: "POST /api/v1/reset",
+      key: "reset-key",
+    });
+
+    const rows = await env.DB.prepare(
+      "SELECT scope, key FROM api_idempotency WHERE owner_id = ? ORDER BY key",
+    )
+      .bind(OWNER)
+      .all();
+    expect(rows.results).toEqual([{ scope: "POST /api/v1/reset", key: "reset-key" }]);
+    await expect(
+      repository.completeIdempotency({
+        ownerId: OWNER,
+        scope: "POST /api/v1/reset",
+        key: "reset-key",
+        requestHash: "reset-hash",
+        claimToken: "reset-claim",
+        response: new Response(null, { status: 204 }),
+        completedAt: AT,
+      }),
+    ).resolves.toBe(true);
+  });
+
   it("enriches interaction context from owner-scoped stored content", async () => {
     const repository = new D1OwnerDataRepository(env.DB);
     await seedContent(repository, OWNER, "rss:owner", [
