@@ -662,8 +662,9 @@ async function route(input: {
   }
 
   if (match.name === "suggestions") {
+    const suggestions = await repository.listSuggestions(ownerId);
     return typedJson(SuggestionsResponseSchema, {
-      suggestions: await repository.listSuggestions(ownerId),
+      suggestions: suggestions.filter((suggestion) => suggestion.status === "pending"),
     });
   }
   if (match.name === "suggestion") {

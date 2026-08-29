@@ -591,6 +591,31 @@ describe("owner API router", () => {
     expect(confirmed).toEqual(["systems", "type theory"]);
   });
 
+  it("shows only pending bootstrap suggestions for owner review", async () => {
+    const repo = repository();
+    const suggestion = {
+      id: "suggestion:systems",
+      ownerId: OWNER,
+      value: "systems",
+      evidenceCount: 2,
+      provenance: { source: "bootstrap", observedAt: AT },
+      createdAt: AT,
+    } as const;
+    repo.listSuggestions = async () => [
+      { ...suggestion, status: "pending" },
+      { ...suggestion, id: "suggestion:confirmed", status: "confirmed", decidedAt: AT },
+      { ...suggestion, id: "suggestion:rejected", status: "rejected", decidedAt: AT },
+    ];
+    const handler = createOwnerApiHandler(dependencies({ repository: repo }));
+
+    const response = await handler(new Request("https://fads.cc/api/v1/suggestions"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      suggestions: [{ ...suggestion, status: "pending" }],
+    });
+  });
+
   it("validates interaction membership and derives its source from stored content", async () => {
     const repo = repository();
     await repo.saveSource(source());

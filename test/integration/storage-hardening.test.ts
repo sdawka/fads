@@ -239,7 +239,12 @@ describe("hardened owner storage", () => {
         createdAt: AT,
       },
     ]);
-    await repository.decideSuggestion(OWNER, "suggestion:one", "confirm", AT);
+    await expect(
+      repository.decideSuggestion(OWNER, "suggestion:one", "confirm", AT),
+    ).resolves.toMatchObject({ status: "confirmed" });
+    await expect(
+      repository.decideSuggestion(OWNER, "suggestion:one", "reject", AT),
+    ).resolves.toBeUndefined();
 
     expect(await repository.listConfirmedSuggestions(OWNER)).toEqual(["distributed systems"]);
   });

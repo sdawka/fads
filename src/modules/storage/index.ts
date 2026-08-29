@@ -634,12 +634,13 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
     decision: "confirm" | "reject",
     at: string,
   ): Promise<InterestSuggestion | undefined> {
-    await this.db
+    const result = await this.db
       .prepare(
         "UPDATE interest_suggestions SET status = ?, decided_at = ? WHERE owner_id = ? AND id = ? AND status = 'pending'",
       )
       .bind(decision === "confirm" ? "confirmed" : "rejected", at, ownerId, suggestionId)
       .run();
+    if (changes(result) === 0) return undefined;
     return (await this.listSuggestions(ownerId)).find((item) => item.id === suggestionId);
   }
 
