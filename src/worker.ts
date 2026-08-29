@@ -1,5 +1,6 @@
 import { handle } from "@astrojs/cloudflare/handler";
 import type { AppEnv } from "./app-env";
+import { handleApplicationRuntime } from "./application-runtime";
 import { type QueueMessage } from "./contracts";
 import { OwnerSessionDO } from "./owner-session-do";
 import { handleQueue, handleScheduled } from "./worker-handlers";
@@ -7,6 +8,7 @@ import { createFetchHandler } from "./worker-routing";
 
 const fetch = createFetchHandler<Request, AppEnv, ExecutionContext<unknown>>(
   (request, env, context) => handle(request, env as unknown as Env, context),
+  (request, env) => handleApplicationRuntime(request, env),
 );
 
 export { OwnerSessionDO };
