@@ -144,6 +144,30 @@ describe("hardened owner storage", () => {
       claimToken: "claim-five",
     });
     expect(reclaimed).toEqual({ status: "claimed", claimToken: "claim-five" });
+
+    const pending = {
+      ...claim,
+      key: "stale-pending",
+      claimToken: "pending-one",
+    };
+    await expect(repository.claimIdempotency(pending)).resolves.toEqual({
+      status: "claimed",
+      claimToken: "pending-one",
+    });
+    await expect(
+      repository.claimIdempotency({
+        ...pending,
+        now: "2026-08-28T12:01:00.000Z",
+        claimToken: "pending-two",
+      }),
+    ).resolves.toEqual({ status: "pending" });
+    await expect(
+      repository.claimIdempotency({
+        ...pending,
+        now: "2026-08-28T12:03:00.000Z",
+        claimToken: "pending-three",
+      }),
+    ).resolves.toEqual({ status: "claimed", claimToken: "pending-three" });
   });
 
   it("does not alter foreign metadata when content identifiers collide", async () => {
@@ -292,6 +316,48 @@ describe("hardened owner storage", () => {
     ).rejects.toThrow(/source not found/i);
   });
 
+  it("serializes work per source and permits an explicitly released retry", async () => {
+    const repository = new D1OwnerDataRepository(env.DB);
+    await repository.saveSource(source("rss:serialized"));
+
+    await expect(
+      repository.claimSyncWork({
+        ownerId: OWNER,
+        sourceId: "rss:serialized",
+        fingerprint: "sync:first",
+        now: AT,
+        claimToken: "first-claim",
+      }),
+    ).resolves.toEqual({ status: "claimed", claimToken: "first-claim" });
+    await expect(
+      repository.claimSyncWork({
+        ownerId: OWNER,
+        sourceId: "rss:serialized",
+        fingerprint: "sync:second",
+        now: AT,
+        claimToken: "second-claim",
+      }),
+    ).resolves.toEqual({ status: "pending" });
+
+    await expect(
+      repository.releaseSyncWork({
+        ownerId: OWNER,
+        sourceId: "rss:serialized",
+        fingerprint: "sync:first",
+        claimToken: "first-claim",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      repository.claimSyncWork({
+        ownerId: OWNER,
+        sourceId: "rss:serialized",
+        fingerprint: "sync:first",
+        now: AT,
+        claimToken: "retry-claim",
+      }),
+    ).resolves.toEqual({ status: "claimed", claimToken: "retry-claim" });
+  });
+
   it("resets learned state without deleting durable feedback or manual intent", async () => {
     const repository = new D1OwnerDataRepository(env.DB);
     await seedContent(repository, OWNER, "rss:owner", [envelope("one", "rss:owner")]);
@@ -329,7 +395,32 @@ describe("hardened owner storage", () => {
       notNow: [],
       recentlyShown: [],
     });
-    expect((await repository.getPreferences(OWNER)).mutedSourceIds).toEqual([]);
+    expect((await repository.getPreferences(OWNER)).mutedSourceIds).toEqual(["rss:owner"]);
+  });
+
+  it("keeps saved content readable and lets a re-added feed reclaim deleted-source items", async () => {
+    const repository = new D1OwnerDataRepository(env.DB);
+    await seedContent(repository, OWNER, "rss:old", [
+      envelope("one", "rss:old", "https://example.com/canonical"),
+    ]);
+    await repository.saveKeep({ ownerId: OWNER, contentId: "one", keptAt: AT });
+    await repository.removeSource(OWNER, "rss:old");
+
+    expect((await repository.hydrateContent(OWNER, ["one"])).map((item) => item.id)).toEqual([
+      "one",
+    ]);
+
+    await repository.saveSource(source("rss:new", OWNER, "https://rss-old.example/feed"));
+    const sync = repository.rssSyncRepository(OWNER, "rss:new", () => AT);
+    expect(
+      await sync.isKnownContent({ id: "one", canonicalUri: "https://example.com/canonical" }),
+    ).toBe(false);
+    await sync.commitSync({
+      sourceId: "rss:new",
+      items: [envelope("one", "rss:new", "https://example.com/canonical")],
+    });
+
+    expect((await repository.listCandidates(OWNER))[0]?.sourceId).toBe("rss:new");
   });
 
   it("preserves only the in-flight full-reset claim so its response can be replayed", async () => {
@@ -391,7 +482,7 @@ describe("hardened owner storage", () => {
       contentId: "one",
       sourceId: "rss:owner",
       canonicalUri: "https://example.com/canonical",
-      format: "paragraph",
+      format: "text",
       tags: ["tag:one"],
       labels: ["label:one"],
     });

@@ -139,6 +139,7 @@ export interface IdempotencyClaimInput {
   requestHash: string;
   now: string;
   expiresAt: string;
+  pendingReclaimBefore?: string;
   claimToken?: string;
 }
 
@@ -180,6 +181,13 @@ export interface SyncWorkCompleteInput {
   completedAt: string;
 }
 
+export interface SyncWorkReleaseInput {
+  ownerId: string;
+  sourceId: string;
+  fingerprint: string;
+  claimToken: string;
+}
+
 /** Atomic and owner-scoped seams used by the Worker API and queue consumer. */
 export interface OwnerStorageHardeningRepository {
   claimIdempotency(input: IdempotencyClaimInput): Promise<IdempotencyClaimResult>;
@@ -202,6 +210,7 @@ export interface OwnerStorageHardeningRepository {
   ): Promise<boolean>;
   claimSyncWork(input: SyncWorkClaimInput): Promise<SyncWorkClaimResult>;
   completeSyncWork(input: SyncWorkCompleteInput): Promise<boolean>;
+  releaseSyncWork(input: SyncWorkReleaseInput): Promise<boolean>;
 }
 
 export interface OwnerCurationState {
@@ -703,7 +712,7 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
     const placeholders = uniqueIds.map(() => "?").join(", ");
     const rows = await this.db
       .prepare(
-        `SELECT ci.id, ci.source_id, ci.canonical_uri, ci.published_at, ci.captured_at, ci.blocks_json, ci.media_json FROM content_items ci JOIN sources s ON s.id = ci.source_id WHERE s.owner_id = ? AND s.deleted_at IS NULL AND ci.id IN (${placeholders})`,
+        `SELECT ci.id, ci.source_id, ci.canonical_uri, ci.published_at, ci.captured_at, ci.blocks_json, ci.media_json FROM content_items ci JOIN sources s ON s.id = ci.source_id WHERE s.owner_id = ? AND ci.id IN (${placeholders})`,
       )
       .bind(ownerId, ...uniqueIds)
       .all<ContentRow>();
@@ -1132,7 +1141,6 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
       await this.db.batch([
         this.db.prepare("DELETE FROM learned_adjustments WHERE owner_id = ?").bind(ownerId),
         this.db.prepare("DELETE FROM content_suppressions WHERE owner_id = ?").bind(ownerId),
-        this.db.prepare("DELETE FROM owner_muted_sources WHERE owner_id = ?").bind(ownerId),
       ]);
       return;
     }
@@ -1163,9 +1171,12 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
 
   async claimIdempotency(input: IdempotencyClaimInput): Promise<IdempotencyClaimResult> {
     const claimToken = input.claimToken ?? crypto.randomUUID();
+    const pendingReclaimBefore =
+      input.pendingReclaimBefore ??
+      new Date(new Date(input.now).getTime() - 2 * 60 * 1000).toISOString();
     await this.db
       .prepare(
-        "INSERT INTO api_idempotency (owner_id, scope, key, request_hash, response_status, response_headers_json, response_body, created_at, expires_at, state, claim_token, claimed_at, completed_at) VALUES (?, ?, ?, ?, 0, '{}', '', ?, ?, 'pending', ?, ?, NULL) ON CONFLICT(owner_id, scope, key) DO UPDATE SET request_hash = excluded.request_hash, response_status = 0, response_headers_json = '{}', response_body = '', created_at = excluded.created_at, expires_at = excluded.expires_at, state = 'pending', claim_token = excluded.claim_token, claimed_at = excluded.claimed_at, completed_at = NULL WHERE api_idempotency.expires_at <= excluded.claimed_at",
+        "INSERT INTO api_idempotency (owner_id, scope, key, request_hash, response_status, response_headers_json, response_body, created_at, expires_at, state, claim_token, claimed_at, completed_at) VALUES (?, ?, ?, ?, 0, '{}', '', ?, ?, 'pending', ?, ?, NULL) ON CONFLICT(owner_id, scope, key) DO UPDATE SET request_hash = excluded.request_hash, response_status = 0, response_headers_json = '{}', response_body = '', created_at = excluded.created_at, expires_at = excluded.expires_at, state = 'pending', claim_token = excluded.claim_token, claimed_at = excluded.claimed_at, completed_at = NULL WHERE api_idempotency.expires_at <= excluded.claimed_at OR (api_idempotency.state = 'pending' AND api_idempotency.claimed_at <= ?)",
       )
       .bind(
         input.ownerId,
@@ -1176,6 +1187,7 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
         input.expiresAt,
         claimToken,
         input.now,
+        pendingReclaimBefore,
       )
       .run();
     const row = await this.db
@@ -1291,9 +1303,19 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
     ).toISOString();
     await this.db
       .prepare(
-        "INSERT INTO source_sync_work (owner_id, source_id, fingerprint, state, claim_token, claimed_at, outcome, completed_at) VALUES (?, ?, ?, 'pending', ?, ?, NULL, NULL) ON CONFLICT(owner_id, source_id, fingerprint) DO UPDATE SET state = 'pending', claim_token = excluded.claim_token, claimed_at = excluded.claimed_at, outcome = NULL, completed_at = NULL WHERE source_sync_work.state = 'pending' AND source_sync_work.claimed_at <= ?",
+        "INSERT INTO source_sync_work (owner_id, source_id, fingerprint, state, claim_token, claimed_at, outcome, completed_at) SELECT ?, ?, ?, 'pending', ?, ?, NULL, NULL WHERE NOT EXISTS (SELECT 1 FROM source_sync_work WHERE owner_id = ? AND source_id = ? AND state = 'pending' AND claimed_at > ?) ON CONFLICT(owner_id, source_id, fingerprint) DO UPDATE SET state = 'pending', claim_token = excluded.claim_token, claimed_at = excluded.claimed_at, outcome = NULL, completed_at = NULL WHERE source_sync_work.state = 'pending' AND source_sync_work.claimed_at <= ?",
       )
-      .bind(input.ownerId, input.sourceId, input.fingerprint, claimToken, input.now, reclaimBefore)
+      .bind(
+        input.ownerId,
+        input.sourceId,
+        input.fingerprint,
+        claimToken,
+        input.now,
+        input.ownerId,
+        input.sourceId,
+        reclaimBefore,
+        reclaimBefore,
+      )
       .run();
     const row = await this.db
       .prepare(
@@ -1305,7 +1327,7 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
         claim_token: string;
         outcome: "processed" | "duplicate" | "retry" | "failed" | null;
       }>();
-    if (!row) throw new Error("Queue work claim was not persisted");
+    if (!row) return { status: "pending" };
     if (row.state === "completed") {
       if (!row.outcome) throw new Error("Completed queue work has no outcome");
       return { status: "duplicate", outcome: row.outcome };
@@ -1328,6 +1350,16 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
         input.fingerprint,
         input.claimToken,
       )
+      .run();
+    return changes(result) > 0;
+  }
+
+  async releaseSyncWork(input: SyncWorkReleaseInput): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        "DELETE FROM source_sync_work WHERE owner_id = ? AND source_id = ? AND fingerprint = ? AND claim_token = ? AND state = 'pending'",
+      )
+      .bind(input.ownerId, input.sourceId, input.fingerprint, input.claimToken)
       .run();
     return changes(result) > 0;
   }
@@ -1359,7 +1391,7 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
         Boolean(
           await this.db
             .prepare(
-              "SELECT ci.id FROM content_items ci JOIN sources s ON s.id = ci.source_id WHERE s.owner_id = ? AND (ci.id = ? OR ci.canonical_uri = ?)",
+              "SELECT ci.id FROM content_items ci JOIN sources s ON s.id = ci.source_id WHERE s.owner_id = ? AND s.deleted_at IS NULL AND (ci.id = ? OR ci.canonical_uri = ?)",
             )
             .bind(ownerId, id, canonicalUri)
             .first(),
@@ -1379,23 +1411,31 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
           const idPlaceholders = captured.map(() => "?").join(", ");
           const idCollision = await this.db
             .prepare(
-              `SELECT id FROM content_items WHERE id IN (${idPlaceholders}) AND source_id <> ? LIMIT 1`,
+              `SELECT ci.id FROM content_items ci JOIN sources s ON s.id = ci.source_id WHERE ci.id IN (${idPlaceholders}) AND ci.source_id <> ? AND NOT (s.owner_id = ? AND s.deleted_at IS NOT NULL) LIMIT 1`,
             )
-            .bind(...captured.map((item) => item.id), sourceId)
+            .bind(...captured.map((item) => item.id), sourceId, ownerId)
             .first<{ id: string }>();
           if (idCollision) throw new Error("Content identifier belongs to another source");
           const uriPlaceholders = captured.map(() => "?").join(", ");
           const uriRows = await this.db
             .prepare(
-              `SELECT id, source_id, canonical_uri FROM content_items WHERE canonical_uri IN (${uriPlaceholders})`,
+              `SELECT ci.id, ci.source_id, ci.canonical_uri, s.owner_id, s.deleted_at FROM content_items ci JOIN sources s ON s.id = ci.source_id WHERE ci.canonical_uri IN (${uriPlaceholders})`,
             )
             .bind(...captured.map((item) => item.canonicalUri))
-            .all<{ id: string; source_id: string; canonical_uri: string }>();
+            .all<{
+              id: string;
+              source_id: string;
+              canonical_uri: string;
+              owner_id: string;
+              deleted_at: string | null;
+            }>();
           const expectedByUri = new Map(captured.map((item) => [item.canonicalUri, item.id]));
           if (
             uriRows.results.some(
               (row) =>
-                row.source_id !== sourceId || expectedByUri.get(row.canonical_uri) !== row.id,
+                (row.source_id !== sourceId &&
+                  !(row.owner_id === ownerId && row.deleted_at !== null)) ||
+                expectedByUri.get(row.canonical_uri) !== row.id,
             )
           ) {
             throw new Error("Canonical URI belongs to another content item");
@@ -1406,7 +1446,7 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
           statements.push(
             this.db
               .prepare(
-                "INSERT INTO content_items (id, source_id, canonical_uri, published_at, captured_at, blocks_json, media_json) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET published_at = excluded.published_at, captured_at = excluded.captured_at, blocks_json = excluded.blocks_json, media_json = excluded.media_json WHERE content_items.source_id = excluded.source_id",
+                "INSERT INTO content_items (id, source_id, canonical_uri, published_at, captured_at, blocks_json, media_json) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET source_id = excluded.source_id, published_at = excluded.published_at, captured_at = excluded.captured_at, blocks_json = excluded.blocks_json, media_json = excluded.media_json WHERE content_items.source_id = excluded.source_id OR EXISTS (SELECT 1 FROM sources previous WHERE previous.id = content_items.source_id AND previous.owner_id = ? AND previous.deleted_at IS NOT NULL)",
               )
               .bind(
                 item.id,
@@ -1416,6 +1456,7 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
                 item.capturedAt,
                 JSON.stringify(item.blocks),
                 JSON.stringify(item.media),
+                ownerId,
               ),
           );
           statements.push(
