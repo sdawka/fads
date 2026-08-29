@@ -60,6 +60,53 @@ const fullPost = {
 };
 
 describe("AT Protocol source adapter", () => {
+  it("syncs the owner's home timeline for consumption by default", async () => {
+    const calls: Array<{ name: string; params?: Record<string, unknown> }> = [];
+    const source = createAtprotoSource({
+      ownerDid,
+      client: {
+        get: async (name, init) => {
+          calls.push({ name, params: init?.params });
+          return { ok: true, data: { feed: [{ post: fullPost }], cursor: "next-page" } };
+        },
+      },
+      safetyLabels: new Set(),
+      now: () => "2026-08-28T12:05:00.000Z",
+    });
+
+    const result = await source.sync("previous-page");
+
+    expect(calls).toEqual([
+      {
+        name: "app.bsky.feed.getTimeline",
+        params: { cursor: "previous-page", limit: 100 },
+      },
+    ]);
+    expect(result).toMatchObject({ items: [{ canonicalUri: postUri }], nextCursor: "next-page" });
+  });
+
+  it("supports an explicitly configured custom feed", async () => {
+    const calls: Array<{ name: string; params?: Record<string, unknown> }> = [];
+    const feed = "at://did:plc:feedowner/app.bsky.feed.generator/curious";
+    const source = createAtprotoSource({
+      ownerDid,
+      stream: { kind: "feed", uri: feed },
+      client: {
+        get: async (name, init) => {
+          calls.push({ name, params: init?.params });
+          return { ok: true, data: { feed: [] } };
+        },
+      },
+      safetyLabels: new Set(),
+    });
+
+    await source.sync();
+
+    expect(calls).toEqual([
+      { name: "app.bsky.feed.getFeed", params: { feed, cursor: undefined, limit: 100 } },
+    ]);
+  });
+
   it("normalizes a canonical DID post URI and makes record-with-media inert safe blocks", async () => {
     const source = createAtprotoSource({
       ownerDid,

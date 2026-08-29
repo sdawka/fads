@@ -22,6 +22,7 @@ export interface AtprotoSourceOptions {
   client: AtprotoXrpcClient;
   safetyLabels: ReadonlySet<string>;
   sourceId?: string;
+  stream?: { kind: "timeline" } | { kind: "feed"; uri: string };
   now?: () => string;
 }
 
@@ -68,9 +69,19 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
       return result;
     },
     async sync(cursor) {
-      const response = await options.client.get("app.bsky.feed.getAuthorFeed", {
-        params: { actor: options.ownerDid, cursor, limit: 100, filter: "posts_no_replies" },
-      });
+      const stream = options.stream ?? { kind: "timeline" as const };
+      if (stream.kind === "feed" && !isCanonicalAtUri(stream.uri)) {
+        throw new TypeError("Custom AT Protocol feed must use a canonical AT URI");
+      }
+      const response = await options.client.get(
+        stream.kind === "feed" ? "app.bsky.feed.getFeed" : "app.bsky.feed.getTimeline",
+        {
+          params:
+            stream.kind === "feed"
+              ? { feed: stream.uri, cursor, limit: 100 }
+              : { cursor, limit: 100 },
+        },
+      );
       const data = object(response.data);
       const feed = response.ok && Array.isArray(data?.feed) ? data.feed : [];
       const items = feed
