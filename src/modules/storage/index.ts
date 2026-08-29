@@ -313,6 +313,11 @@ interface ContentRow {
   media_json: string;
 }
 
+interface HydratedContentRow extends ContentRow {
+  tags_json: string;
+  labels_json: string;
+}
+
 function changes(result: unknown): number {
   return (result as { meta?: { changes?: number } }).meta?.changes ?? 0;
 }
@@ -344,6 +349,42 @@ function sourceFromRow(row: SourceRow): OwnerSource {
 const SOURCE_COLUMNS =
   "id, owner_id, adapter, display_name, url, config_json, status, last_error, last_synced_at, created_at, updated_at";
 
+const HYDRATED_CONTENT_COLUMNS = `
+  ci.id,
+  ci.source_id,
+  ci.canonical_uri,
+  ci.published_at,
+  ci.captured_at,
+  ci.blocks_json,
+  ci.media_json,
+  COALESCE((
+    SELECT json_group_array(json(metadata.entry))
+    FROM (
+      SELECT json_object(
+        'value', content_tags.value,
+        'provenance', json(content_tags.provenance_json)
+      ) AS entry
+      FROM content_tags
+      WHERE content_tags.content_id = ci.id
+      ORDER BY content_tags.value ASC
+    ) metadata
+  ), '[]') AS tags_json,
+  COALESCE((
+    SELECT json_group_array(json(metadata.entry))
+    FROM (
+      SELECT json_object(
+        'value', content_labels.value,
+        'provenance', json(content_labels.provenance_json)
+      ) AS entry
+      FROM content_labels
+      WHERE content_labels.content_id = ci.id
+      ORDER BY content_labels.value ASC
+    ) metadata
+  ), '[]') AS labels_json`;
+
+// Edition creation considers only this finite recent window; private export remains complete.
+const CURATION_CANDIDATE_WINDOW = 500;
+
 function canonicalSourceUrl(value: string): string {
   const url = new URL(value);
   url.hash = "";
@@ -352,6 +393,24 @@ function canonicalSourceUrl(value: string): string {
 
 export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageHardeningRepository {
   constructor(private readonly db: Database) {}
+
+  private envelopeFromStoredMetadata(
+    row: ContentRow,
+    tags: unknown,
+    labels: unknown,
+  ): ContentEnvelope {
+    return ContentEnvelopeSchema.parse({
+      id: row.id,
+      canonicalUri: row.canonical_uri,
+      sourceId: row.source_id,
+      publishedAt: row.published_at,
+      capturedAt: row.captured_at,
+      blocks: parseStoredJson(row.blocks_json),
+      media: parseStoredJson(row.media_json),
+      tags,
+      labels,
+    });
+  }
 
   private async envelopeFromRow(row: ContentRow): Promise<ContentEnvelope> {
     const [tags, labels] = await Promise.all([
@@ -368,23 +427,25 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
         .bind(row.id)
         .all<{ value: string; provenance_json: string }>(),
     ]);
-    return ContentEnvelopeSchema.parse({
-      id: row.id,
-      canonicalUri: row.canonical_uri,
-      sourceId: row.source_id,
-      publishedAt: row.published_at,
-      capturedAt: row.captured_at,
-      blocks: parseStoredJson(row.blocks_json),
-      media: parseStoredJson(row.media_json),
-      tags: tags.results.map((tag) => ({
+    return this.envelopeFromStoredMetadata(
+      row,
+      tags.results.map((tag) => ({
         value: tag.value,
         provenance: parseStoredJson(tag.provenance_json),
       })),
-      labels: labels.results.map((label) => ({
+      labels.results.map((label) => ({
         value: label.value,
         provenance: parseStoredJson(label.provenance_json),
       })),
-    });
+    );
+  }
+
+  private envelopeFromHydratedRow(row: HydratedContentRow): ContentEnvelope {
+    return this.envelopeFromStoredMetadata(
+      row,
+      parseStoredJson(row.tags_json),
+      parseStoredJson(row.labels_json),
+    );
   }
 
   async listSources(ownerId: string): Promise<OwnerSource[]> {
@@ -698,11 +759,21 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
   async listCandidates(ownerId: string): Promise<ContentEnvelope[]> {
     const rows = await this.db
       .prepare(
-        "SELECT ci.id, ci.source_id, ci.canonical_uri, ci.published_at, ci.captured_at, ci.blocks_json, ci.media_json FROM content_items ci JOIN sources s ON s.id = ci.source_id WHERE s.owner_id = ? AND s.deleted_at IS NULL ORDER BY ci.published_at DESC, ci.id ASC",
+        `SELECT ${HYDRATED_CONTENT_COLUMNS} FROM content_items ci JOIN sources s ON s.id = ci.source_id WHERE s.owner_id = ? AND s.deleted_at IS NULL ORDER BY ci.published_at DESC, ci.id ASC LIMIT ?`,
+      )
+      .bind(ownerId, CURATION_CANDIDATE_WINDOW)
+      .all<HydratedContentRow>();
+    return rows.results.map((row) => this.envelopeFromHydratedRow(row));
+  }
+
+  private async listRetainedContentForExport(ownerId: string): Promise<ContentEnvelope[]> {
+    const rows = await this.db
+      .prepare(
+        `SELECT ${HYDRATED_CONTENT_COLUMNS} FROM content_items ci JOIN sources s ON s.id = ci.source_id WHERE s.owner_id = ? ORDER BY ci.published_at DESC, ci.id ASC`,
       )
       .bind(ownerId)
-      .all<ContentRow>();
-    return Promise.all(rows.results.map((row) => this.envelopeFromRow(row)));
+      .all<HydratedContentRow>();
+    return rows.results.map((row) => this.envelopeFromHydratedRow(row));
   }
 
   async hydrateContent(ownerId: string, contentIds: readonly string[]): Promise<ContentEnvelope[]> {
@@ -962,7 +1033,7 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
 
   async exportOwnerData(ownerId: string): Promise<OwnerExport> {
     const [
-      sources,
+      sourceRows,
       syncCursors,
       content,
       interests,
@@ -976,14 +1047,19 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
       editionItems,
       editionDecisions,
     ] = await Promise.all([
-      this.listSources(ownerId),
+      this.db
+        .prepare(
+          `SELECT ${SOURCE_COLUMNS} FROM sources WHERE owner_id = ? ORDER BY created_at ASC, id ASC`,
+        )
+        .bind(ownerId)
+        .all<SourceRow>(),
       this.db
         .prepare(
           "SELECT sc.source_id, sc.cursor, sc.synced_at FROM sync_cursors sc JOIN sources s ON s.id = sc.source_id WHERE s.owner_id = ? ORDER BY sc.source_id ASC",
         )
         .bind(ownerId)
         .all<{ source_id: string; cursor: string | null; synced_at: string }>(),
-      this.listCandidates(ownerId),
+      this.listRetainedContentForExport(ownerId),
       this.listInterests(ownerId),
       this.listSuggestions(ownerId),
       this.getPreferences(ownerId),
@@ -1064,7 +1140,7 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
       ownerId,
       exportedAt: new Date().toISOString(),
       data: {
-        sources,
+        sources: sourceRows.results.map(sourceFromRow),
         syncCursors: syncCursors.results.map((row) => ({
           sourceId: row.source_id,
           cursor: row.cursor,

@@ -70,6 +70,35 @@ async function seedContent(
     });
 }
 
+async function seedSequentialContent(
+  repository: D1OwnerDataRepository,
+  count: number,
+  sourceId = "rss:window",
+): Promise<void> {
+  await repository.saveSource(source(sourceId));
+  await env.DB.prepare(
+    `WITH RECURSIVE sequence(value) AS (
+      SELECT 0
+      UNION ALL
+      SELECT value + 1 FROM sequence WHERE value < ?
+    )
+    INSERT INTO content_items (
+      id, source_id, canonical_uri, published_at, captured_at, blocks_json, media_json
+    )
+    SELECT
+      printf('window-%03d', value),
+      ?,
+      'https://example.com/window-' || printf('%03d', value),
+      strftime('%Y-%m-%dT%H:%M:%fZ', datetime('2026-01-01T00:00:00Z', '+' || value || ' seconds')),
+      ?,
+      '[{"kind":"paragraph","text":"window"}]',
+      '[]'
+    FROM sequence`,
+  )
+    .bind(count - 1, sourceId, AT)
+    .run();
+}
+
 beforeEach(async () => {
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
   await env.DB.batch([
@@ -421,6 +450,33 @@ describe("hardened owner storage", () => {
     });
 
     expect((await repository.listCandidates(OWNER))[0]?.sourceId).toBe("rss:new");
+  });
+
+  it("limits curation candidates to the five hundred most recent retained items", async () => {
+    const repository = new D1OwnerDataRepository(env.DB);
+    await seedSequentialContent(repository, 501);
+
+    const candidates = await repository.listCandidates(OWNER);
+
+    expect(candidates).toHaveLength(500);
+    expect(candidates[0]?.id).toBe("window-500");
+    expect(candidates.at(-1)?.id).toBe("window-001");
+  });
+
+  it("exports all retained content together with its tombstoned source", async () => {
+    const repository = new D1OwnerDataRepository(env.DB);
+    await seedSequentialContent(repository, 501);
+    await repository.removeSource(OWNER, "rss:window");
+
+    const exported = await repository.exportOwnerData(OWNER);
+
+    expect(exported.data.sources.map((item) => item.id)).toEqual(["rss:window"]);
+    expect(exported.data.content).toHaveLength(501);
+    expect(exported.data.content[0]?.id).toBe("window-500");
+    expect(exported.data.content.at(-1)?.id).toBe("window-000");
+    expect(new Set(exported.data.content.map((item) => item.sourceId))).toEqual(
+      new Set(["rss:window"]),
+    );
   });
 
   it("preserves only the in-flight full-reset claim so its response can be replayed", async () => {
