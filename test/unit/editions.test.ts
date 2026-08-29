@@ -71,12 +71,13 @@ describe("edition repository lifecycle", () => {
       completed: false,
     });
     expect(await repository.setPosition("owner", edition.id, 99)).toMatchObject({
-      position: 2,
-      completed: true,
+      position: 1,
+      completed: false,
     });
     expect(await repository.resume("owner", edition.id)).toMatchObject({
-      position: 2,
-      completed: true,
+      position: 1,
+      completed: false,
+      currentItem: { contentId: "content-1" },
     });
 
     await repository.markComplete("owner", edition.id);

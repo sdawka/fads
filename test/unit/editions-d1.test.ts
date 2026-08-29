@@ -285,10 +285,14 @@ describe("D1 edition repository", () => {
       "edition-d1",
       99,
     );
-    expect(positioned).toMatchObject({ position: 1, completed: true });
+    expect(positioned).toMatchObject({ position: 0, completed: false });
 
     const resumed = await new D1EditionRepository(database).resume("owner", "edition-d1");
-    expect(resumed).toMatchObject({ position: 1, completed: true, currentItem: undefined });
+    expect(resumed).toMatchObject({
+      position: 0,
+      completed: false,
+      currentItem: { contentId: "content" },
+    });
 
     await new D1EditionRepository(database).markComplete("owner", "edition-d1");
     expect(await new D1EditionRepository(database).resume("owner", "edition-d1")).toMatchObject({

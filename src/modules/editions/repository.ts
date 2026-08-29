@@ -47,7 +47,7 @@ function copy<T>(value: T): T {
 
 export function clampEditionPosition(position: number, itemCount: number): number {
   if (!Number.isFinite(position)) return 0;
-  return Math.max(0, Math.min(itemCount, Math.trunc(position)));
+  return Math.max(0, Math.min(Math.max(0, itemCount - 1), Math.trunc(position)));
 }
 
 function progressKey(ownerId: string, editionId: string): string {
@@ -115,12 +115,15 @@ export class MemoryEditionRepository implements EditionRepository {
     this.editions.set(validated.ownerId, ownerEditions);
     const key = progressKey(validated.ownerId, validated.id);
     const previous = this.progress.get(key);
-    const position = clampEditionPosition(previous?.position ?? 0, validated.items.length);
+    const completed = previous?.completed === true;
+    const position = completed
+      ? validated.items.length
+      : clampEditionPosition(previous?.position ?? 0, validated.items.length);
     this.progress.set(key, {
       editionId: validated.id,
       ownerId: validated.ownerId,
       position,
-      completed: previous?.completed === true,
+      completed,
     });
     const ownerDecisions =
       this.decisions.get(validated.ownerId) ?? new Map<string, CandidateDecision[]>();
@@ -151,8 +154,10 @@ export class MemoryEditionRepository implements EditionRepository {
     if (!edition) return undefined;
     const key = progressKey(ownerId, edition.id);
     const previous = this.progress.get(key);
-    const position = clampEditionPosition(previous?.position ?? 0, edition.items.length);
     const completed = previous?.completed === true;
+    const position = completed
+      ? edition.items.length
+      : clampEditionPosition(previous?.position ?? 0, edition.items.length);
     if (previous && (previous.position !== position || previous.completed !== completed)) {
       this.progress.set(key, { ...previous, position, completed });
     }
@@ -171,12 +176,16 @@ export class MemoryEditionRepository implements EditionRepository {
   ): Promise<EditionProgress> {
     const edition = await this.getEdition(ownerId, editionId);
     if (!edition) throw new Error("Edition not found");
-    const clamped = clampEditionPosition(position, edition.items.length);
+    const previous = this.progress.get(progressKey(ownerId, editionId));
+    const completed = previous?.completed === true;
+    const clamped = completed
+      ? edition.items.length
+      : clampEditionPosition(position, edition.items.length);
     const next: EditionProgress = {
       editionId,
       ownerId,
       position: clamped,
-      completed: clamped >= edition.items.length,
+      completed,
     };
     this.progress.set(progressKey(ownerId, editionId), next);
     return { ...next };
@@ -400,9 +409,10 @@ export class D1EditionRepository implements EditionRepository {
     if (!edition) return undefined;
     const row = await this.row(ownerId, edition.id);
     if (!row) return undefined;
-    const position = clampEditionPosition(row.position, edition.items.length);
-    const completed =
-      row.completed === 1 || (edition.items.length > 0 && position >= edition.items.length);
+    const completed = row.completed === 1;
+    const position = completed
+      ? edition.items.length
+      : clampEditionPosition(row.position, edition.items.length);
     if (row.position !== position || row.completed !== (completed ? 1 : 0)) {
       await this.db
         .prepare("UPDATE editions SET position = ?, completed = ? WHERE owner_id = ? AND id = ?")
@@ -424,8 +434,12 @@ export class D1EditionRepository implements EditionRepository {
   ): Promise<EditionProgress> {
     const edition = await this.getEdition(ownerId, editionId);
     if (!edition) throw new Error("Edition not found");
-    const clamped = clampEditionPosition(position, edition.items.length);
-    const completed = clamped >= edition.items.length;
+    const row = await this.row(ownerId, editionId);
+    if (!row) throw new Error("Edition not found");
+    const completed = row.completed === 1;
+    const clamped = completed
+      ? edition.items.length
+      : clampEditionPosition(position, edition.items.length);
     const result = (await this.db
       .prepare("UPDATE editions SET position = ?, completed = ? WHERE owner_id = ? AND id = ?")
       .bind(clamped, completed ? 1 : 0, ownerId, editionId)
