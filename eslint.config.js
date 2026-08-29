@@ -43,26 +43,33 @@ export const domainBoundaryRule = {
     const currentSegments = path.relative(modulesRoot, filename).split(path.sep);
     const currentModule = moduleId(currentSegments);
 
+    function checkPath(node, importPath) {
+      if (!importPath.startsWith(".")) return;
+
+      const resolved = path.resolve(path.dirname(filename), importPath);
+      if (isWithin(resolved, contractsRoot) || !isWithin(resolved, modulesRoot)) return;
+
+      const target = path.relative(modulesRoot, resolved).split(path.sep);
+      const targetModule = moduleId(target);
+      const isSameModule = targetModule !== undefined && targetModule === currentModule;
+      const publicPath = target.slice(moduleRootLength(target));
+      const isPublicIndex =
+        targetModule !== undefined &&
+        (publicPath.length === 0 || (publicPath.length === 1 && publicPath[0] === "index"));
+
+      if (!isSameModule && !isPublicIndex) {
+        context.report({ node, messageId: "deepCrossDomain", data: { importPath } });
+      }
+    }
+
+    function checkSource(node) {
+      if (node.source) checkPath(node, node.source.value);
+    }
+
     return {
-      ImportDeclaration(node) {
-        const importPath = node.source.value;
-        if (!importPath.startsWith(".")) return;
-
-        const resolved = path.resolve(path.dirname(filename), importPath);
-        if (isWithin(resolved, contractsRoot) || !isWithin(resolved, modulesRoot)) return;
-
-        const target = path.relative(modulesRoot, resolved).split(path.sep);
-        const targetModule = moduleId(target);
-        const isSameModule = targetModule !== undefined && targetModule === currentModule;
-        const publicPath = target.slice(moduleRootLength(target));
-        const isPublicIndex =
-          targetModule !== undefined &&
-          (publicPath.length === 0 || (publicPath.length === 1 && publicPath[0] === "index"));
-
-        if (!isSameModule && !isPublicIndex) {
-          context.report({ node, messageId: "deepCrossDomain", data: { importPath } });
-        }
-      },
+      ImportDeclaration: checkSource,
+      ExportNamedDeclaration: checkSource,
+      ExportAllDeclaration: checkSource,
     };
   },
 };
