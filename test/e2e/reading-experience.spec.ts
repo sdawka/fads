@@ -97,12 +97,64 @@ test.beforeEach(async ({ page }) => {
   );
   await page.route("**/api/v1/editions/active", (route) => route.fulfill({ json: activeEdition }));
   await page.route("**/api/v1/editions/edition-1/progress", (route) =>
-    route.fulfill({ json: { ok: true } }),
+    route.fulfill({
+      json: {
+        progress: {
+          editionId: "edition-1",
+          ownerId: "did:plc:owner",
+          position: 1,
+          completed: false,
+        },
+      },
+    }),
   );
   await page.route("**/api/v1/editions/edition-1/complete", (route) =>
-    route.fulfill({ json: { ok: true } }),
+    route.fulfill({
+      json: {
+        progress: {
+          editionId: "edition-1",
+          ownerId: "did:plc:owner",
+          position: 1,
+          completed: true,
+        },
+      },
+    }),
   );
-  await page.route("**/api/v1/interactions", (route) => route.fulfill({ json: { ok: true } }));
+  await page.route("**/api/v1/keeps", (route) =>
+    route.fulfill({
+      json: {
+        keeps: [
+          {
+            ownerId: "did:plc:owner",
+            contentId: "post-1",
+            keptAt: observedAt,
+          },
+        ],
+        content: [activeEdition.content[0]],
+      },
+    }),
+  );
+  await page.route("**/api/v1/interactions", (route) => {
+    const body = route.request().postDataJSON() as {
+      contentId: string;
+      sourceId: string;
+      kind: string;
+    };
+    return route.fulfill({
+      status: 201,
+      json: {
+        interaction: {
+          id: "interaction-1",
+          ownerId: "did:plc:owner",
+          contentId: body.contentId,
+          sourceId: body.sourceId,
+          kind: body.kind,
+          occurredAt: observedAt,
+          provenance,
+        },
+      },
+    });
+  });
 });
 
 test("reads exactly one safe item at a time and ends deliberately", async ({ page }) => {
@@ -169,6 +221,14 @@ test("resumes the validated active edition when the private API is offline", asy
 
   await expect(page.getByRole("heading", { name: "The city is a garden" })).toBeVisible();
   await expect(page.getByRole("status")).toContainText("Offline edition resumed");
+});
+
+test("shows safe hydrated previews instead of opaque keep identifiers", async ({ page }) => {
+  await page.goto("/keeps/");
+
+  await expect(page.getByRole("heading", { name: "The city is a garden" })).toBeVisible();
+  await expect(page.getByText(/Look between the paving stones/)).toBeVisible();
+  await expect(page.getByText("post-1", { exact: true })).toHaveCount(0);
 });
 
 test("requires an explicit accessible confirmation before a full reset", async ({ page }) => {

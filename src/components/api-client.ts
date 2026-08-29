@@ -1,20 +1,26 @@
 import {
+  EditionProgressResponseSchema,
   EditionResponseSchema,
-  InterestSuggestionSchema,
-  ManualInterestSchema,
+  InterestResponseSchema,
+  InterestsResponseSchema,
+  InteractionResponseSchema,
+  KeepResponseSchema,
+  KeepsResponseSchema,
+  OpmlImportResponseSchema,
+  OwnerExportSchema,
   OwnerPreferencesSchema,
+  PreferencesResponseSchema,
+  SessionResponseSchema,
   SourceCreateSchema,
-  SourceSchema,
+  SourceResponseSchema,
+  SourcesResponseSchema,
   SuggestionDecisionSchema,
+  SuggestionResponseSchema,
+  SuggestionsResponseSchema,
 } from "../contracts";
+import { isValidActiveEditionResponse } from "../modules/offline";
 import { z } from "zod";
-import type {
-  ActiveEditionView,
-  FadsUiClient,
-  FeedbackKind,
-  OwnerExport,
-  SessionView,
-} from "./models";
+import type { ActiveEditionView, FadsUiClient, FeedbackKind } from "./models";
 
 const paths = {
   session: "/api/v1/session",
@@ -38,27 +44,6 @@ const paths = {
   reset: "/api/v1/reset",
   logout: "/api/v1/logout",
 } as const;
-
-const KeepRecordSchema = z
-  .object({
-    ownerId: z.string().trim().min(1),
-    contentId: z.string().trim().min(1),
-    keptAt: z.iso.datetime({ offset: true }),
-  })
-  .strict();
-const OwnerExportSchema = z
-  .object({
-    ownerId: z.string().trim().min(1),
-    exportedAt: z.iso.datetime({ offset: true }),
-    data: z.record(z.string(), z.json()),
-  })
-  .strict();
-const OpmlImportResponseSchema = z
-  .object({
-    sources: z.array(SourceSchema),
-    rejected: z.array(z.object({ url: z.string(), reason: z.string() }).strict()),
-  })
-  .strict();
 
 function idempotencyKey(): string {
   return globalThis.crypto?.randomUUID?.() ?? `ui-${Date.now()}-${Math.random()}`;
@@ -85,22 +70,16 @@ function parse<T>(value: unknown, schema: z.ZodType<T>, message: string): T {
   return parsed.data;
 }
 
-function parseSession(value: unknown): SessionView {
-  if (typeof value !== "object" || value === null) throw new Error("Invalid session response.");
-  const authenticated = (value as Record<string, unknown>).authenticated;
-  const did = (value as Record<string, unknown>).did;
-  if (typeof authenticated !== "boolean" || (did !== undefined && typeof did !== "string")) {
-    throw new Error("Invalid session response.");
-  }
-  return { authenticated, ...(typeof did === "string" ? { did } : {}) };
-}
-
 function parseActiveEdition(value: unknown): ActiveEditionView {
   const parsed = EditionResponseSchema.safeParse(value);
-  if (!parsed.success) {
+  if (!parsed.success || !isValidActiveEditionResponse(value)) {
     throw new Error("Invalid edition response.");
   }
   return parsed.data;
+}
+
+function isOfflineQueued(response: Response): boolean {
+  return response.status === 202 && response.headers.get("x-offline-queued") === "true";
 }
 
 export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch): FadsUiClient {
@@ -129,7 +108,11 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
 
   return {
     async session() {
-      return parseSession(await readJson(await get(paths.session)));
+      return parse(
+        await readJson(await get(paths.session)),
+        SessionResponseSchema,
+        "Invalid session response.",
+      );
     },
     async activeEdition() {
       const response = await get(paths.activeEdition);
@@ -140,10 +123,16 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
       return parseActiveEdition(await readJson(await mutate(paths.createEdition, input)));
     },
     async setProgress(editionId, position) {
-      await readJson(await mutate(paths.progress(editionId), { position }, "PATCH"));
+      const response = await mutate(paths.progress(editionId), { position }, "PATCH");
+      if (isOfflineQueued(response)) return;
+      parse(await readJson(response), EditionProgressResponseSchema, "Invalid progress response.");
     },
     async complete(editionId) {
-      await readJson(await mutate(paths.complete(editionId), {}));
+      parse(
+        await readJson(await mutate(paths.complete(editionId), {})),
+        EditionProgressResponseSchema,
+        "Invalid progress response.",
+      );
     },
     async interact(input: {
       editionId: string;
@@ -151,45 +140,36 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
       sourceId: string;
       kind: FeedbackKind;
     }) {
-      await readJson(await mutate(paths.interaction, input));
+      const response = await mutate(paths.interaction, input);
+      if (isOfflineQueued(response)) return;
+      parse(await readJson(response), InteractionResponseSchema, "Invalid interaction response.");
     },
     async listKeeps() {
       const value = await readJson(await get(paths.keeps));
-      return parse(
-        value,
-        z.object({ keeps: z.array(KeepRecordSchema) }).strict(),
-        "Invalid keeps response.",
-      ).keeps;
+      return parse(value, KeepsResponseSchema, "Invalid keeps response.");
     },
     async addKeep(contentId: string) {
       const value = await readJson(await mutate(paths.keeps, { contentId }));
-      return parse(value, z.object({ keep: KeepRecordSchema }).strict(), "Invalid keep response.")
-        .keep;
+      return parse(value, KeepResponseSchema, "Invalid keep response.").keep;
     },
     async removeKeep(contentId: string) {
       readNoContent(await mutate(paths.keep(contentId), undefined, "DELETE"));
     },
     async listSources() {
       const value = await readJson(await get(paths.sources));
-      return parse(
-        value,
-        z.object({ sources: z.array(SourceSchema) }).strict(),
-        "Invalid sources response.",
-      ).sources;
+      return parse(value, SourcesResponseSchema, "Invalid sources response.").sources;
     },
     async addSource(input) {
       const body = parse(input, SourceCreateSchema, "Invalid source request.");
       const value = await readJson(await mutate(paths.sources, body));
-      return parse(value, z.object({ source: SourceSchema }).strict(), "Invalid source response.")
-        .source;
+      return parse(value, SourceResponseSchema, "Invalid source response.").source;
     },
     async removeSource(sourceId: string) {
       readNoContent(await mutate(paths.source(sourceId), undefined, "DELETE"));
     },
     async refreshSource(sourceId: string) {
       const value = await readJson(await mutate(paths.sourceRefresh(sourceId), {}));
-      return parse(value, z.object({ source: SourceSchema }).strict(), "Invalid source response.")
-        .source;
+      return parse(value, SourceResponseSchema, "Invalid source response.").source;
     },
     async muteSource(sourceId: string, muted: boolean, current) {
       const previous = current ?? (await this.getPreferences());
@@ -211,58 +191,34 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
     },
     async listInterests() {
       const value = await readJson(await get(paths.interests));
-      return parse(
-        value,
-        z.object({ interests: z.array(ManualInterestSchema) }).strict(),
-        "Invalid interests response.",
-      ).interests;
+      return parse(value, InterestsResponseSchema, "Invalid interests response.").interests;
     },
     async addInterest(value: string) {
       const response = await readJson(await mutate(paths.interests, { value }));
-      return parse(
-        response,
-        z.object({ interest: ManualInterestSchema }).strict(),
-        "Invalid interest response.",
-      ).interest;
+      return parse(response, InterestResponseSchema, "Invalid interest response.").interest;
     },
     async removeInterest(interestId: string) {
       readNoContent(await mutate(paths.interest(interestId), undefined, "DELETE"));
     },
     async listSuggestions() {
       const value = await readJson(await get(paths.suggestions));
-      return parse(
-        value,
-        z.object({ suggestions: z.array(InterestSuggestionSchema) }).strict(),
-        "Invalid suggestions response.",
-      ).suggestions;
+      return parse(value, SuggestionsResponseSchema, "Invalid suggestions response.").suggestions;
     },
     async decideSuggestion(suggestionId: string, decision: "confirm" | "reject") {
       const body = parse({ decision }, SuggestionDecisionSchema, "Invalid suggestion decision.");
       const value = await readJson(await mutate(paths.suggestion(suggestionId), body));
-      return parse(
-        value,
-        z.object({ suggestion: InterestSuggestionSchema }).strict(),
-        "Invalid suggestion response.",
-      ).suggestion;
+      return parse(value, SuggestionResponseSchema, "Invalid suggestion response.").suggestion;
     },
     async getPreferences() {
       const value = await readJson(await get(paths.preferences));
-      return parse(
-        value,
-        z.object({ preferences: OwnerPreferencesSchema }).strict(),
-        "Invalid preferences response.",
-      ).preferences;
+      return parse(value, PreferencesResponseSchema, "Invalid preferences response.").preferences;
     },
     async savePreferences(preferences) {
       const body = parse(preferences, OwnerPreferencesSchema, "Invalid preferences request.");
       const value = await readJson(await mutate(paths.preferences, body, "PUT"));
-      return parse(
-        value,
-        z.object({ preferences: OwnerPreferencesSchema }).strict(),
-        "Invalid preferences response.",
-      ).preferences;
+      return parse(value, PreferencesResponseSchema, "Invalid preferences response.").preferences;
     },
-    async exportData(): Promise<OwnerExport> {
+    async exportData() {
       return parse(
         await readJson(await get(paths.export)),
         OwnerExportSchema,

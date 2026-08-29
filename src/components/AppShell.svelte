@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  import type { ContentEnvelope } from "../contracts";
+  import type { ContentEnvelope, KeepRecord, OwnerExport } from "../contracts";
   import {
     clearOfflineState,
     getOfflineEdition,
@@ -13,8 +13,6 @@
     ActiveEditionView,
     FadsUiClient,
     FeedbackKind,
-    KeepRecord,
-    OwnerExport,
     Surface,
   } from "./models";
   import { describeControlValue, describeDecisionFactor, moveReader } from "./reading";
@@ -33,6 +31,7 @@
   let atEnd = false;
   let traceExpanded = false;
   let keeps: KeepRecord[] = [];
+  let keptContent: ContentEnvelope[] = [];
   let manualInterests: Awaited<ReturnType<FadsUiClient["listInterests"]>> = [];
   let suggestions: Awaited<ReturnType<FadsUiClient["listSuggestions"]>> = [];
   let rssSources: Awaited<ReturnType<FadsUiClient["listSources"]>> = [];
@@ -120,7 +119,11 @@
   async function loadSurface(uiClient: FadsUiClient) {
     managementLoading = true;
     try {
-      if (activeSurface === "keeps") keeps = await uiClient.listKeeps();
+      if (activeSurface === "keeps") {
+        const library = await uiClient.listKeeps();
+        keeps = library.keeps;
+        keptContent = library.content;
+      }
       if (activeSurface === "sources") {
         [rssSources, preferences] = await Promise.all([
           uiClient.listSources(),
@@ -189,7 +192,10 @@
     if (!edition || !item || !client) return;
     const wasKept = keeps.some((keep) => keep.contentId === item.id);
     if (kind === "keep") {
-      if (!wasKept) keeps = [{ ownerId: "", contentId: item.id, keptAt: new Date().toISOString() }, ...keeps];
+      if (!wasKept) {
+        keeps = [{ ownerId: "", contentId: item.id, keptAt: new Date().toISOString() }, ...keeps];
+        keptContent = [item, ...keptContent.filter((content) => content.id !== item.id)];
+      }
     }
     statusMessage = kind === "keep" ? "Kept for later." : "Noted. Your taste changed a little.";
     try {
@@ -203,12 +209,11 @@
       if (offlinePending > 0) {
         statusMessage = `${offlinePending} change${offlinePending === 1 ? " is" : "s are"} waiting to sync.`;
       }
-      if (kind === "keep" && !wasKept) {
-        const saved = await client.addKeep(item.id);
-        keeps = keeps.map((keep) => (keep.contentId === item.id ? saved : keep));
-      }
     } catch (error) {
-      if (kind === "keep" && !wasKept) keeps = keeps.filter((keep) => keep.contentId !== item.id);
+      if (kind === "keep" && !wasKept) {
+        keeps = keeps.filter((keep) => keep.contentId !== item.id);
+        keptContent = keptContent.filter((content) => content.id !== item.id);
+      }
       statusMessage = error instanceof Error ? error.message : "Feedback will be sent when online.";
     }
   }
@@ -258,11 +263,14 @@
     if (!client) return;
     const previous = keeps;
     keeps = keeps.filter((keep) => keep.contentId !== contentId);
+    const previousContent = keptContent;
+    keptContent = keptContent.filter((content) => content.id !== contentId);
     try {
       await client.removeKeep(contentId);
       statusMessage = "Keep removed.";
     } catch (error) {
       keeps = previous;
+      keptContent = previousContent;
       statusMessage = error instanceof Error ? error.message : "The keep could not be removed.";
     }
   }
@@ -397,6 +405,14 @@
 
   function formatDate(value: string): string {
     return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
+  }
+
+  function contentTitle(content: ContentEnvelope): string {
+    return content.blocks.find((block) => block.kind === "heading")?.text ?? "Untitled";
+  }
+
+  function contentPreview(content: ContentEnvelope): string {
+    return content.blocks.find((block) => block.kind === "paragraph")?.text ?? "Saved for later.";
   }
 
   function formatOf(content: ContentEnvelope): string {
@@ -556,7 +572,7 @@
           {:else if keeps.length === 0}
             <div class="empty-note"><p>Nothing kept yet.</p><a href="/">Open an edition and keep what stays with you.</a></div>
           {:else}
-            <ol class="keep-list">{#each keeps as keep}<li><span>{formatDate(keep.keptAt)}</span><strong>{keep.contentId}</strong><button type="button" on:click={() => removeKeep(keep.contentId)}>Remove</button></li>{/each}</ol>
+            <ol class="keep-list">{#each keeps as keep}{@const content = keptContent.find((item) => item.id === keep.contentId)}<li><span>{formatDate(keep.keptAt)}</span><div><h2>{content ? contentTitle(content) : "Unavailable item"}</h2>{#if content}<p>{contentPreview(content)}</p><small>{content.sourceId}</small>{/if}</div><button type="button" on:click={() => removeKeep(keep.contentId)}>Remove</button></li>{/each}</ol>
           {/if}
         </section>
       {:else if activeSurface === "sources"}

@@ -31,6 +31,42 @@ const suggestion = {
   createdAt: "2026-08-28T12:00:00.000Z",
 };
 
+const keptContent = {
+  id: "content-1",
+  canonicalUri: "https://example.com/kept",
+  sourceId: source.id,
+  publishedAt: source.createdAt,
+  capturedAt: source.createdAt,
+  blocks: [
+    { kind: "heading" as const, text: "A kept field note", level: 1 },
+    { kind: "paragraph" as const, text: "A safe preview." },
+  ],
+  media: [],
+  tags: [],
+  labels: [],
+};
+
+const ownerExport = {
+  ownerId: source.ownerId,
+  exportedAt: source.createdAt,
+  data: {
+    sources: [],
+    syncCursors: [],
+    content: [],
+    interests: [],
+    suggestions: [],
+    preferences: { blockedLabels: [], mutedSourceIds: [] },
+    learnedAdjustments: [],
+    suppressions: [],
+    interactions: [],
+    keeps: [],
+    editions: [],
+    editionItems: [],
+    editionDecisions: [],
+    progress: [],
+  },
+};
+
 function response(value: unknown, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(value), {
     status,
@@ -48,6 +84,7 @@ describe("browser UI management client", () => {
       .mockResolvedValueOnce(
         response({
           keeps: [{ ownerId: source.ownerId, contentId: "content-1", keptAt: source.createdAt }],
+          content: [keptContent],
         }),
       )
       .mockResolvedValueOnce(
@@ -72,9 +109,10 @@ describe("browser UI management client", () => {
       client.addSource({ adapter: "rss", displayName: source.displayName, url: source.url }),
     ).resolves.toEqual(source);
     await client.removeSource(source.id);
-    await expect(client.listKeeps()).resolves.toEqual([
-      { ownerId: source.ownerId, contentId: "content-1", keptAt: source.createdAt },
-    ]);
+    await expect(client.listKeeps()).resolves.toEqual({
+      keeps: [{ ownerId: source.ownerId, contentId: "content-1", keptAt: source.createdAt }],
+      content: [keptContent],
+    });
     await expect(client.addKeep("content-1")).resolves.toEqual({
       ownerId: source.ownerId,
       contentId: "content-1",
@@ -125,9 +163,7 @@ describe("browser UI management client", () => {
           headers: { "Content-Type": "text/x-opml" },
         }),
       )
-      .mockResolvedValueOnce(
-        response({ ownerId: source.ownerId, exportedAt: source.createdAt, data: { sources: [] } }),
-      )
+      .mockResolvedValueOnce(response(ownerExport))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     const client = createBrowserUiClient(fetcher);
@@ -138,11 +174,7 @@ describe("browser UI management client", () => {
       rejected: [],
     });
     await expect(client.exportOpml()).resolves.toContain("<opml");
-    await expect(client.exportData()).resolves.toEqual({
-      ownerId: source.ownerId,
-      exportedAt: source.createdAt,
-      data: { sources: [] },
-    });
+    await expect(client.exportData()).resolves.toEqual(ownerExport);
     await expect(client.reset(false)).resolves.toBeUndefined();
     await expect(client.logout()).resolves.toBeUndefined();
 

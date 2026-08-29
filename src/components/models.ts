@@ -1,7 +1,9 @@
 import type {
   ContentEnvelope,
   InterestSuggestion,
+  KeepRecord,
   ManualInterest,
+  OwnerExport,
   OwnerPreferences,
   RecommendationSlate,
   ApiSource,
@@ -23,17 +25,9 @@ export interface ActiveEditionView {
   completed: boolean;
 }
 
-/** The API's keep shape is currently owned by storage, pending a shared contract schema. */
-export interface KeepRecord {
-  ownerId: string;
-  contentId: string;
-  keptAt: string;
-}
-
-export interface OwnerExport {
-  ownerId: string;
-  exportedAt: string;
-  data: Record<string, unknown>;
+export interface KeepLibrary {
+  keeps: KeepRecord[];
+  content: ContentEnvelope[];
 }
 
 export interface FadsUiClient {
@@ -48,7 +42,7 @@ export interface FadsUiClient {
     sourceId: string;
     kind: FeedbackKind;
   }): Promise<void>;
-  listKeeps(): Promise<KeepRecord[]>;
+  listKeeps(): Promise<KeepLibrary>;
   addKeep(contentId: string): Promise<KeepRecord>;
   removeKeep(contentId: string): Promise<void>;
   listSources(): Promise<ApiSource[]>;

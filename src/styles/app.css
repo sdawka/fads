@@ -696,6 +696,23 @@ dialog p:not(.section-number) {
   font-family: var(--utility);
   font-size: 0.65rem;
 }
+.keep-list h2 {
+  margin: 0 0 0.35rem;
+  font-family: var(--display);
+  font-size: 1.4rem;
+  font-weight: 500;
+}
+.keep-list p {
+  max-width: 60ch;
+  margin: 0 0 0.4rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.keep-list small {
+  color: var(--muted);
+  font-family: var(--utility);
+  font-size: 0.65rem;
+}
 .management-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1000,6 +1017,13 @@ dialog p:not(.section-number) {
   }
   .source-list li {
     grid-template-columns: 1fr auto;
+  }
+  .keep-list li {
+    grid-template-columns: 1fr auto;
+    gap: 0.55rem 1rem;
+  }
+  .keep-list li > span {
+    grid-column: 1 / -1;
   }
   .source-list li > span {
     grid-row: 2;
