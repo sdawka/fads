@@ -63,20 +63,40 @@ CREATE TABLE learned_adjustments (
 );
 
 CREATE TABLE editions (
-  id TEXT PRIMARY KEY,
   owner_id TEXT NOT NULL,
+  id TEXT NOT NULL,
   requested_at TEXT NOT NULL,
+  curiosity INTEGER NOT NULL CHECK (curiosity BETWEEN 0 AND 100),
+  energy INTEGER NOT NULL CHECK (energy BETWEEN 0 AND 100),
   trace_json TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
+  completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (owner_id, id)
 );
 
 CREATE TABLE edition_items (
-  edition_id TEXT NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
+  owner_id TEXT NOT NULL,
+  edition_id TEXT NOT NULL,
   content_id TEXT NOT NULL REFERENCES content_items(id) ON DELETE RESTRICT,
   position INTEGER NOT NULL,
   recommendation_json TEXT NOT NULL,
-  PRIMARY KEY (edition_id, content_id),
-  UNIQUE (edition_id, position)
+  PRIMARY KEY (owner_id, edition_id, content_id),
+  UNIQUE (owner_id, edition_id, position),
+  FOREIGN KEY (owner_id, edition_id) REFERENCES editions(owner_id, id) ON DELETE CASCADE
+);
+
+CREATE TABLE edition_decisions (
+  owner_id TEXT NOT NULL,
+  edition_id TEXT NOT NULL,
+  decision_key TEXT NOT NULL,
+  content_id TEXT NOT NULL,
+  canonical_uri TEXT,
+  selected INTEGER NOT NULL CHECK (selected IN (0, 1)),
+  reason TEXT,
+  trace_json TEXT NOT NULL,
+  PRIMARY KEY (owner_id, edition_id, decision_key),
+  FOREIGN KEY (owner_id, edition_id) REFERENCES editions(owner_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE interactions (
@@ -105,6 +125,8 @@ CREATE TABLE idempotency_keys (
 
 CREATE INDEX idx_content_items_canonical_uri ON content_items(canonical_uri);
 CREATE INDEX idx_content_items_source_published_at ON content_items(source_id, published_at DESC);
-CREATE INDEX idx_edition_items_edition_position ON edition_items(edition_id, position);
+CREATE INDEX idx_editions_owner_created_at ON editions(owner_id, created_at DESC);
+CREATE INDEX idx_edition_items_edition_position ON edition_items(owner_id, edition_id, position);
+CREATE INDEX idx_edition_decisions_edition ON edition_decisions(owner_id, edition_id);
 CREATE INDEX idx_interactions_occurred_at ON interactions(occurred_at DESC);
 CREATE INDEX idx_idempotency_keys_expires_at ON idempotency_keys(expires_at);

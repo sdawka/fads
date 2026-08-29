@@ -25,11 +25,44 @@ describe("initial D1 migration", () => {
         "learned_adjustments",
         "editions",
         "edition_items",
+        "edition_decisions",
         "interactions",
         "keeps",
         "idempotency_keys",
       ]),
     );
+  });
+
+  it("persists owner-scoped edition settings, lifecycle, and decision traces", async () => {
+    const columns = await env.DB.prepare("PRAGMA table_info(editions)").all<{
+      name: string;
+      pk: number;
+    }>();
+    const byName = new Map(columns.results.map((column) => [column.name, column]));
+
+    expect([...byName.keys()]).toEqual(
+      expect.arrayContaining(["owner_id", "id", "curiosity", "energy", "position", "completed"]),
+    );
+    expect(byName.get("owner_id")?.pk).toBeGreaterThan(0);
+    expect(byName.get("id")?.pk).toBeGreaterThan(0);
+
+    await env.DB.prepare(
+      "INSERT INTO editions (owner_id, id, requested_at, curiosity, energy, trace_json, position, completed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+      .bind("owner-a", "same-edition", "2026-08-28T12:00:00.000Z", 80, 20, "{}", 0, 0, "2026-08-28T12:00:00.000Z")
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO editions (owner_id, id, requested_at, curiosity, energy, trace_json, position, completed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+      .bind("owner-b", "same-edition", "2026-08-28T12:00:00.000Z", 10, 90, "{}", 0, 0, "2026-08-28T12:00:00.000Z")
+      .run();
+
+    const owners = await env.DB.prepare(
+      "SELECT owner_id FROM editions WHERE id = ? ORDER BY owner_id",
+    )
+      .bind("same-edition")
+      .all<{ owner_id: string }>();
+    expect(owners.results).toEqual([{ owner_id: "owner-a" }, { owner_id: "owner-b" }]);
   });
 
   it("enforces source references and adds the required lookup indexes", async () => {
