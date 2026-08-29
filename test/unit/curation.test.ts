@@ -68,6 +68,38 @@ describe("deterministic curation", () => {
     expect(outputs.size).toBeGreaterThan(1);
   });
 
+  it("treats no-interest cold-start candidates as normal exploitation", () => {
+    const items = Array.from({ length: 8 }, (_, index) =>
+      content(`cold-${index}`, `source-${index}`, `tag-${index}`),
+    );
+
+    const result = new CurationEngine().generate(
+      { ownerId: "owner", requestedAt, curiosity: 50, energy: 50, limit: 8 },
+      items,
+      { seed: "cold-start" },
+    );
+
+    expect(result.slate.items).toHaveLength(8);
+    expect(
+      result.slate.items.every((item) =>
+        item.decisionTrace.factors.some((factor) => factor.factor === "exploitation"),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps explicitly marked cold-start candidates in the surprise quota", () => {
+    const result = new CurationEngine().generate(
+      { ownerId: "owner", requestedAt, curiosity: 0, energy: 50, limit: 2 },
+      [content("normal", "source-a", "one"), content("explicit", "source-b", "two")],
+      { seed: "explicit-cold-start", explorationIds: ["explicit"] },
+    );
+
+    expect(result.slate.items.map((item) => item.contentId)).toEqual(["normal"]);
+    expect(result.slate.items[0]?.decisionTrace.factors.map((factor) => factor.factor)).toContain(
+      "exploitation",
+    );
+  });
+
   it("applies every hard gate before scoring, including at maximum curiosity", () => {
     const items = [
       content("labelled", "safe", "systems"),
@@ -383,7 +415,12 @@ describe("deterministic curation", () => {
       { seed: "bootstrap", confirmedInterests: ["systems"] },
     );
 
-    expect(proposed.slate.items).toEqual([]);
+    expect(proposed.slate.items[0]?.decisionTrace.factors.map((factor) => factor.factor)).toEqual(
+      expect.arrayContaining(["exploitation"]),
+    );
+    expect(
+      proposed.slate.items[0]?.decisionTrace.factors.map((factor) => factor.factor),
+    ).not.toContain("interest-match");
     expect(
       confirmed.slate.items[0]?.decisionTrace.factors.map((factor) => factor.factor),
     ).toContain("interest-match");

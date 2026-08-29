@@ -633,7 +633,7 @@ export class CurationEngine {
         explicitExploration.has(normalize(item.id)) ||
         (options.isExploration
           ? options.isExploration(item, scored.matchedInterests)
-          : scored.matchedInterests.length === 0);
+          : interests.length > 0 && scored.matchedInterests.length === 0);
       prepared.push({
         item,
         format,
