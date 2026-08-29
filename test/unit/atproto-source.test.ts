@@ -118,6 +118,38 @@ describe("AT Protocol source adapter", () => {
     await expect(source.tryHydrate(postUri)).rejects.toMatchObject({ status: 503 });
   });
 
+  it("preserves record and facet hashtags as provenance-bearing taste tags", async () => {
+    const taggedPost = {
+      ...fullPost,
+      record: {
+        ...fullPost.record,
+        tags: ["UrbanEcology", "Tools"],
+        facets: [
+          {
+            index: { byteStart: 0, byteEnd: 5 },
+            features: [{ $type: "app.bsky.richtext.facet#tag", tag: "Architecture" }],
+          },
+        ],
+      },
+    };
+    const source = createAtprotoSource({
+      ownerDid,
+      client: { get: async () => ({ ok: true, data: { posts: [taggedPost] } }) },
+      safetyLabels: new Set(),
+      now: () => "2026-08-28T12:05:00.000Z",
+    });
+
+    const item = await source.tryHydrate(postUri);
+
+    expect(item).toMatchObject({
+      tags: [
+        { value: "UrbanEcology", provenance: { source: "atproto", reference: postUri } },
+        { value: "Tools", provenance: { source: "atproto", reference: postUri } },
+        { value: "Architecture", provenance: { source: "atproto", reference: postUri } },
+      ],
+    });
+  });
+
   it("normalizes a canonical DID post URI and makes record-with-media inert safe blocks", async () => {
     const source = createAtprotoSource({
       ownerDid,

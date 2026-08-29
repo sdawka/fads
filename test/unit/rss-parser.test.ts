@@ -72,4 +72,23 @@ describe("RSS and Atom parsing", () => {
 
     expect(feed.items[0]?.blocks).toEqual([{ kind: "heading", text: "Safe title", level: 2 }]);
   });
+
+  it("preserves RSS and Atom subject categories as provenance-bearing taste tags", () => {
+    const rss = parseFeed(
+      `<rss><channel><item><guid>tagged</guid><title>Tagged</title><category>Urban Ecology</category><category>Tools</category></item></channel></rss>`,
+      { feedUrl: "https://example.com/rss", sourceId: "rss:tags", capturedAt },
+    );
+    const atom = parseFeed(
+      `<feed><entry><id>tagged</id><title>Tagged</title><category term="Architecture"/><category term="Tools"/></entry></feed>`,
+      { feedUrl: "https://example.com/atom", sourceId: "rss:atom-tags", capturedAt },
+    );
+
+    expect(rss.items[0]?.tags.map((tag) => tag.value)).toEqual(["Urban Ecology", "Tools"]);
+    expect(atom.items[0]?.tags.map((tag) => tag.value)).toEqual(["Architecture", "Tools"]);
+    expect(rss.items[0]?.tags[0]?.provenance).toEqual({
+      source: "rss:tags",
+      observedAt: capturedAt,
+      reference: "https://example.com/rss",
+    });
+  });
 });

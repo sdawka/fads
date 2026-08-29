@@ -211,11 +211,36 @@ function normalizePost(
     capturedAt: options.capturedAt,
     blocks,
     media,
-    tags: [],
+    tags: recordTags(record, uri, options.sourceId, options.capturedAt),
     labels,
   };
   const parsed = ContentEnvelopeSchema.safeParse(candidate);
   return parsed.success ? parsed.data : { kind: "omitted", reason: "invalid", canonicalUri: uri };
+}
+
+function recordTags(
+  record: Record<string, unknown> | undefined,
+  reference: string,
+  source: string,
+  observedAt: string,
+): ContentEnvelope["tags"] {
+  const values = array(record?.tags).flatMap((value) => (string(value)?.trim() ? [string(value)!] : []));
+  for (const facet of array(record?.facets)) {
+    for (const feature of array(object(facet)?.features)) {
+      const candidate = object(feature);
+      if (string(candidate?.$type)?.endsWith("#tag")) {
+        const tag = string(candidate?.tag)?.trim();
+        if (tag) values.push(tag);
+      }
+    }
+  }
+  const seen = new Set<string>();
+  return values.flatMap((value) => {
+    const key = value.toLowerCase();
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ value, provenance: { source, observedAt, reference } }];
+  });
 }
 
 function addEmbed(

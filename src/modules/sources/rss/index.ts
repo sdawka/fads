@@ -4,6 +4,7 @@ import {
   ContentEnvelopeSchema,
   type ContentEnvelope,
   type MediaAttachment,
+  type ProvenancedTag,
   type SafeBlock,
   type SourceAdapter,
 } from "../../../contracts";
@@ -134,6 +135,27 @@ function media(
   };
 }
 
+function entryTags(entry: XmlRecord, options: ParseFeedOptions): ProvenancedTag[] {
+  const seen = new Set<string>();
+  return arrayOf(local(entry, "category")).flatMap((category) => {
+    const categoryRecord = record(category);
+    const value = valueOf(categoryRecord?.["@_term"] ?? category);
+    const key = value?.toLowerCase();
+    if (!value || !key || seen.has(key)) return [];
+    seen.add(key);
+    return [
+      {
+        value,
+        provenance: {
+          source: options.sourceId,
+          observedAt: options.capturedAt,
+          reference: canonicalizeUrl(options.feedUrl),
+        },
+      },
+    ];
+  });
+}
+
 function parseRssItem(entry: XmlRecord, options: ParseFeedOptions): ContentEnvelope {
   const title = valueOf(local(entry, "title"));
   const guid = valueOf(local(entry, "guid"));
@@ -191,7 +213,7 @@ function parseRssItem(entry: XmlRecord, options: ParseFeedOptions): ContentEnvel
     capturedAt: options.capturedAt,
     blocks,
     media: attachments,
-    tags: [],
+    tags: entryTags(entry, options),
     labels: [],
   };
 }
@@ -222,7 +244,7 @@ function parseAtomItem(entry: XmlRecord, options: ParseFeedOptions): ContentEnve
     capturedAt: options.capturedAt,
     blocks,
     media: [],
-    tags: [],
+    tags: entryTags(entry, options),
     labels: [],
   };
 }
