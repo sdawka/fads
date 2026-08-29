@@ -349,8 +349,7 @@ describe("owner API router", () => {
           new Response(null, {
             status: 204,
             headers: {
-              "set-cookie":
-                "fads_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
+              "set-cookie": "fads_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
             },
           }),
       }),

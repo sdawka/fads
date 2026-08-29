@@ -407,9 +407,7 @@ export function createOwnerApiHandler(dependencies: OwnerApiDependencies) {
           requestHash,
           now: claimedAt,
           expiresAt,
-          pendingReclaimBefore: new Date(
-            claimedAtMs - IDEMPOTENCY_PENDING_LEASE_MS,
-          ).toISOString(),
+          pendingReclaimBefore: new Date(claimedAtMs - IDEMPOTENCY_PENDING_LEASE_MS).toISOString(),
           claimToken: crypto.randomUUID(),
         });
         if (claim.status === "conflict") {

@@ -49,8 +49,9 @@ describe("Worker ingestion handlers", () => {
         createdAt: "2026-08-28T12:00:00.000Z",
       },
     ]);
-    expect(buildBootstrapSuggestionRecords("did:plc:owner", [], "2026-08-28T12:00:00.000Z"))
-      .toEqual([]);
+    expect(
+      buildBootstrapSuggestionRecords("did:plc:owner", [], "2026-08-28T12:00:00.000Z"),
+    ).toEqual([]);
   });
 
   it("keeps suggestion identifiers bounded and skips unusably long observed tags", () => {

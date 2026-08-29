@@ -26,10 +26,11 @@ function suggestionId(ownerId: string, value: string): string {
     hash ^= byte;
     hash = Math.imul(hash, 16777619);
   }
-  const slug = normalized
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48) || "interest";
+  const slug =
+    normalized
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 48) || "interest";
   return `suggestion:${slug}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 

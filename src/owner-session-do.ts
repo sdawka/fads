@@ -68,9 +68,7 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
       return Promise.resolve(true);
     }
     if (row.count >= OAUTH_START_LIMIT) return Promise.resolve(false);
-    this.ctx.storage.sql.exec(
-      "UPDATE oauth_start_rate SET count = count + 1 WHERE name = 'start'",
-    );
+    this.ctx.storage.sql.exec("UPDATE oauth_start_rate SET count = count + 1 WHERE name = 'start'");
     return Promise.resolve(true);
   }
 
