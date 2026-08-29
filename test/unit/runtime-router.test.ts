@@ -70,18 +70,27 @@ describe("runtime route boundary", () => {
     await expect(response?.json()).resolves.toEqual({ owner: "did:plc:owner" });
   });
 
-  it("logs out only with POST and preserves cookie-clearing headers", async () => {
-    const { auth, route } = createHarness();
+  it("delegates authenticated logout to the idempotent private API", async () => {
+    const { api, auth, route } = createHarness();
+    const request = new Request("https://fads.cc/api/v1/logout", { method: "POST" });
 
-    const rejected = await route(new Request("https://fads.cc/api/v1/logout"));
-    const accepted = await route(
+    const response = await route(request);
+
+    expect(response?.status).toBe(200);
+    expect(api).toHaveBeenCalledWith(request, { did: "did:plc:owner" });
+    expect(auth.logout).not.toHaveBeenCalled();
+  });
+
+  it("does not permit an unauthenticated logout mutation", async () => {
+    const { api, auth, route } = createHarness(false);
+
+    const response = await route(
       new Request("https://fads.cc/api/v1/logout", { method: "POST" }),
     );
 
-    expect(rejected?.status).toBe(405);
-    expect(rejected?.headers.get("allow")).toBe("POST");
-    expect(accepted?.status).toBe(204);
-    expect(auth.logout).toHaveBeenCalledOnce();
+    expect(response?.status).toBe(401);
+    expect(api).not.toHaveBeenCalled();
+    expect(auth.logout).not.toHaveBeenCalled();
   });
 
   it("returns undefined for Astro-owned routes", async () => {

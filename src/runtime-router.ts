@@ -6,7 +6,6 @@ interface RuntimeAuth {
   start(request: Request): Promise<Response>;
   callback(request: Request): Promise<Response>;
   inspect(request: Request): Promise<AuthenticatedOwner | undefined>;
-  logout(request: Request): Promise<Response>;
 }
 
 export type RuntimeApiHandler = (
@@ -35,11 +34,6 @@ export function createRuntimeRouter(input: { auth: RuntimeAuth; api: RuntimeApiH
       return input.auth.callback(request);
     }
     if (!path.startsWith("/api/v1/")) return undefined;
-
-    if (path === "/api/v1/logout") {
-      if (request.method !== "POST") return withPrivateHeaders(methodNotAllowed("POST"));
-      return withPrivateHeaders(await input.auth.logout(request));
-    }
 
     const owner = await input.auth.inspect(request);
     if (path === "/api/v1/session" && request.method === "GET") {
