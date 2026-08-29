@@ -4,6 +4,8 @@
   import type { ContentEnvelope } from "../contracts";
   import {
     clearOfflineState,
+    getOfflineEdition,
+    getOfflineStatus,
     registerOfflineServiceWorker,
   } from "../modules/offline";
   import { createBrowserUiClient } from "./api-client";
@@ -39,6 +41,8 @@
   let managementLoading = false;
   let offlineRegistration: ServiceWorkerRegistration | undefined;
   let offlineState: "checking" | "ready" | "unavailable" = "checking";
+  let offlinePending = 0;
+  let offlineFailed = 0;
   let ownerDid = "";
 
   let offlineRegistrationPromise: Promise<ServiceWorkerRegistration | undefined> | undefined;
@@ -61,9 +65,21 @@
   $: item = frame ? edition?.content.find((candidate) => candidate.id === frame?.contentId) : undefined;
   $: title = item?.blocks.find((block) => block.kind === "heading")?.text ?? "Untitled";
 
+  async function refreshOfflineQueueStatus(): Promise<void> {
+    try {
+      const status = await getOfflineStatus();
+      offlinePending = status.pending;
+      offlineFailed = status.failed;
+    } catch {
+      offlinePending = 0;
+      offlineFailed = 0;
+    }
+  }
+
   onMount(async () => {
     offlineRegistration = await ensureOfflineRegistration();
     offlineState = offlineRegistration ? "ready" : "unavailable";
+    await refreshOfflineQueueStatus();
     const uiClient = client ?? createBrowserUiClient();
     client = uiClient;
     try {
@@ -77,9 +93,26 @@
         await loadSurface(uiClient);
       }
     } catch (error) {
-      session = "signed-out";
-      loadError = error instanceof Error && error.message === "Your session expired." ? error.message : "";
+      const cached =
+        activeSurface === "edition"
+          ? await getOfflineEdition<ActiveEditionView>().catch(() => undefined)
+          : undefined;
+      if (cached) {
+        session = "authenticated";
+        edition = cached;
+        atEnd = cached.completed;
+        statusMessage = "Offline edition resumed. Changes will sync when you reconnect.";
+      } else {
+        session = "signed-out";
+        loadError =
+          error instanceof Error && error.message === "Your session expired."
+            ? error.message
+            : "The private API could not be reached, and no offline edition is available.";
+      }
     }
+    window.addEventListener("online", () => {
+      window.setTimeout(() => void refreshOfflineQueueStatus(), 500);
+    });
   });
 
   async function loadSurface(uiClient: FadsUiClient) {
@@ -140,6 +173,10 @@
     statusMessage = `Item ${next.position + 1} of ${total}.`;
     try {
       await client.setProgress(edition.edition.id, next.position);
+      await refreshOfflineQueueStatus();
+      if (offlinePending > 0) {
+        statusMessage = `Item ${next.position + 1} of ${total}. ${offlinePending} change${offlinePending === 1 ? " is" : "s are"} waiting to sync.`;
+      }
     } catch (error) {
       edition = { ...edition, position: previousPosition };
       statusMessage = error instanceof Error ? error.message : "Progress will be saved when online.";
@@ -160,6 +197,10 @@
         sourceId: item.sourceId,
         kind,
       });
+      await refreshOfflineQueueStatus();
+      if (offlinePending > 0) {
+        statusMessage = `${offlinePending} change${offlinePending === 1 ? " is" : "s are"} waiting to sync.`;
+      }
       if (kind === "keep" && !wasKept) {
         const saved = await client.addKeep(item.id);
         keeps = keeps.map((keep) => (keep.contentId === item.id ? saved : keep));
@@ -530,7 +571,7 @@
           <header><p class="eyebrow">BOUNDARIES &amp; PORTABILITY</p><h1 id="settings-title">Settings</h1><p>The guardrails stay explicit. Your private data stays portable.</p></header>
           <div class="settings-list">
             <section><div><p class="section-number">ALLOWANCES</p><h2>Content labels</h2><p>Excluded labels are hard gates, never ranking hints.</p></div><fieldset><legend class="visually-hidden">Excluded content labels</legend>{#each ["adult", "graphic", "political"] as label}<label><input type="checkbox" checked={preferences.blockedLabels.includes(label)} on:change={async (event) => { if (!client) return; const checkbox = event.currentTarget as HTMLInputElement; const previous = preferences; preferences = { ...preferences, blockedLabels: checkbox.checked ? [...preferences.blockedLabels, label] : preferences.blockedLabels.filter((item) => item !== label) }; try { preferences = await client.savePreferences(preferences); statusMessage = "Allowances saved."; } catch (error) { preferences = previous; checkbox.checked = previous.blockedLabels.includes(label); statusMessage = error instanceof Error ? error.message : "Allowances could not be saved."; } }} /> {label[0].toUpperCase() + label.slice(1)} content</label>{/each}</fieldset></section>
-            <section><div><p class="section-number">OFFLINE</p><h2>Active edition only</h2><p>The shell and current edition can resume offline. OAuth, exports, and source data never enter the cache.</p></div><p class="connection"><span aria-hidden="true">●</span> {offlineState === "ready" ? "Offline cache active" : offlineState === "checking" ? "Checking offline cache" : "Offline cache unavailable"}</p></section>
+            <section><div><p class="section-number">OFFLINE</p><h2>Active edition only</h2><p>The shell and current edition can resume offline. OAuth, exports, and source data never enter the cache.</p></div><div><p class="connection"><span aria-hidden="true">●</span> {offlineState === "ready" ? "Offline cache active" : offlineState === "checking" ? "Checking offline cache" : "Offline cache unavailable"}</p>{#if offlinePending > 0}<p>{offlinePending} change{offlinePending === 1 ? " is" : "s are"} waiting to sync.</p>{/if}{#if offlineFailed > 0}<p class="notice" role="alert">{offlineFailed} offline change{offlineFailed === 1 ? " needs" : "s need"} attention after the server rejected it.</p>{/if}</div></section>
             <section><div><p class="section-number">PORTABILITY</p><h2>Your private data</h2><p>Download a validated JSON copy whenever you want.</p></div><button class="button quiet" type="button" on:click={downloadExport}>Export my data</button></section>
             <section class="danger-zone"><div><p class="section-number">RESET</p><h2>Start over carefully</h2><p>Reset learned taste while keeping manual interests, or explicitly erase everything.</p></div><div class="row-actions"><button class="button quiet" type="button" on:click={resetLearnedTaste}>Reset learned taste</button><button class="text-button danger" type="button" on:click={fullReset}>Full reset…</button></div></section>
             <section><div><p class="section-number">SESSION</p><h2>Leave this device</h2></div><button class="button primary" type="button" on:click={signOut}>Sign out</button></section>

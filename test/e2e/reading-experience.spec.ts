@@ -55,7 +55,22 @@ const activeEdition = {
         },
         { kind: "link", href: "https://example.com/post", text: "Read the original field note" },
       ],
-      media: [],
+      media: [
+        {
+          id: "image-1",
+          kind: "image",
+          url: "https://example.com/garden.jpg",
+          alt: "Plants growing between paving stones",
+          provenance,
+        },
+        {
+          id: "audio-1",
+          kind: "audio",
+          url: "https://example.com/field-note.mp3",
+          alt: "Audio field note",
+          provenance,
+        },
+      ],
       tags: [],
       labels: [],
     },
@@ -98,6 +113,8 @@ test("reads exactly one safe item at a time and ends deliberately", async ({ pag
   await expect(page.getByText("Manual interest · urban ecology")).toBeVisible();
   await expect(page.locator("main script")).toHaveCount(0);
   await expect(page.getByText("<script>window.__unsafe = true</script>")).toBeVisible();
+  await expect(page.getByAltText("Plants growing between paving stones")).toBeVisible();
+  await expect(page.getByLabel("Audio field note")).not.toHaveAttribute("autoplay", "");
 
   const original = page.getByRole("link", { name: "Read the original field note" });
   await expect(original).toHaveAttribute("target", "_blank");
@@ -123,6 +140,35 @@ test("reads exactly one safe item at a time and ends deliberately", async ({ pag
 
   await expect(page.getByRole("heading", { name: "That’s the edition." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Keep reading" })).toHaveCount(0);
+});
+
+test("resumes the validated active edition when the private API is offline", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "The city is a garden" })).toBeVisible();
+
+  await page.evaluate(async (value) => {
+    const cache = await caches.open("fads-edition-v1");
+    await cache.put(
+      "/api/v1/editions/active",
+      new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } }),
+    );
+    localStorage.setItem("fads-test-offline", "true");
+  }, activeEdition);
+  await page.addInitScript(() => {
+    if (localStorage.getItem("fads-test-offline") !== "true") return;
+    const onlineFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input.url, location.origin);
+      return url.pathname.startsWith("/api/")
+        ? Promise.reject(new TypeError("offline"))
+        : onlineFetch(input, init);
+    };
+  });
+
+  await page.reload();
+
+  await expect(page.getByRole("heading", { name: "The city is a garden" })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Offline edition resumed");
 });
 
 test("keeps mobile reading controls reachable without hiding the trace", async ({ page }) => {
