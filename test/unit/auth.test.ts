@@ -81,6 +81,33 @@ class MemoryOwnerSession {
 }
 
 describe("AT Protocol owner authentication", () => {
+  it("starts private OAuth for the configured owner without asking for a public handle", async () => {
+    const identifiers: string[] = [];
+    const auth = createAtprotoAuth({
+      ownerDid,
+      origin: "https://fads.example",
+      privateJwks: [
+        { kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" },
+      ],
+      session: new MemoryOwnerSession(),
+      oauthFactory: () => ({
+        metadata: {},
+        authorize: async ({ target }) => {
+          identifiers.push(target.identifier);
+          return { url: new URL("https://pds.example/authorize"), stateId: "state" };
+        },
+        callback: async () => ({ session: { did: ownerDid }, state: {} }) as never,
+        restore: async () => ({ did: ownerDid }) as never,
+        revoke: async () => undefined,
+      }),
+    });
+
+    const response = await auth.start(new Request("https://fads.example/oauth/start"));
+
+    expect(response.status).toBe(302);
+    expect(identifiers).toEqual([ownerDid]);
+  });
+
   it("publishes HTTPS metadata and never discloses private JWK members", async () => {
     const auth = createAtprotoAuth({
       ownerDid,

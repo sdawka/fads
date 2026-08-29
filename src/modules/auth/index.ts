@@ -98,11 +98,9 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
   return {
     clientMetadata: () => metadata,
     jwks: () => ({ keys: options.privateJwks.map(publicJwk) }),
-    async start(request: Request): Promise<Response> {
-      const handle = new URL(request.url).searchParams.get("handle")?.trim();
-      if (!handle) return new Response("Missing AT Protocol handle", { status: 400 });
+    async start(_request: Request): Promise<Response> {
       const authorization = await getOAuth().authorize({
-        target: { type: "account", identifier: handle as ActorIdentifier },
+        target: { type: "account", identifier: options.ownerDid as ActorIdentifier },
       });
       return Response.redirect(authorization.url, 302);
     },
