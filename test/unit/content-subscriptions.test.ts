@@ -43,6 +43,16 @@ describe("manual subscriptions and queue planning", () => {
     ]);
   });
 
+  it("deduplicates equivalent exports deterministically", () => {
+    const opml = exportOpml([
+      { title: "Z title", url: "https://example.com/feed#one" },
+      { title: "A title", url: "https://example.com/feed" },
+    ]);
+
+    expect(opml.match(/<outline /g)).toHaveLength(1);
+    expect(opml).toContain('text="A title" xmlUrl="https://example.com/feed"');
+  });
+
   it("plans deterministic versioned structured-clone-safe idempotent sync work", () => {
     const work = planSourceSyncs(["rss:z", "rss:a", "rss:z"]);
 

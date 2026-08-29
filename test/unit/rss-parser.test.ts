@@ -57,4 +57,13 @@ describe("RSS and Atom parsing", () => {
       ).items,
     ).toHaveLength(1);
   });
+
+  it("does not turn discarded source markup into a paragraph", () => {
+    const feed = parseFeed(
+      `<rss><channel><item><guid>unsafe</guid><title>Safe title</title><description><![CDATA[<script>alert(1)</script><style>body{display:none}</style><iframe src="https://evil.example"></iframe>]]></description></item></channel></rss>`,
+      { feedUrl: "https://example.com/feed", sourceId: "rss:safe", capturedAt },
+    );
+
+    expect(feed.items[0]?.blocks).toEqual([{ kind: "heading", text: "Safe title", level: 2 }]);
+  });
 });

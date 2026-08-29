@@ -2,6 +2,7 @@ import { parseDocument } from "htmlparser2";
 import { ElementType } from "domelementtype";
 import type { AnyNode } from "domhandler";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
+import ipaddr from "ipaddr.js";
 
 import type { QueueMessage, SafeBlock } from "../../contracts";
 
@@ -109,25 +110,14 @@ export function canonicalizeUrl(value: string, baseUrl?: string): string {
   return url.toString();
 }
 
-function isPrivateIpv4(hostname: string): boolean {
-  const parts = hostname.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  const [a, b] = parts;
-  return (
-    a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && (b === 0 || b === 168)) || (a === 198 && (b === 18 || b === 19 || b === 51)) ||
-    (a === 203 && b === 0) || a >= 224
-  );
-}
-
-function isPrivateIpv6(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (!host.includes(":")) return false;
-  if (host === "::" || host === "::1" || host.startsWith("fc") || host.startsWith("fd")) return true;
-  if (/^fe[89ab]/.test(host) || host.startsWith("ff") || host.startsWith("2001:db8:")) return true;
-  const mapped = host.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  return mapped ? isPrivateIpv4(mapped[1]) : false;
+function isPublicIpLiteral(hostname: string): boolean | undefined {
+  const host = hostname.replace(/^\[|\]$/g, "");
+  if (!ipaddr.isValid(host)) return undefined;
+  const address = ipaddr.parse(host);
+  if (address instanceof ipaddr.IPv6 && address.isIPv4MappedAddress()) {
+    return address.toIPv4Address().range() === "unicast";
+  }
+  return address.range() === "unicast";
 }
 
 function isLocalAlias(hostname: string): boolean {
@@ -135,7 +125,7 @@ function isLocalAlias(hostname: string): boolean {
   const encodedIpv4 = [".nip.io", ".sslip.io"]
     .map((suffix) => (host.endsWith(suffix) ? host.slice(0, -suffix.length) : undefined))
     .find((candidate): candidate is string => candidate !== undefined);
-  if (encodedIpv4 && isPrivateIpv4(encodedIpv4)) return true;
+  if (encodedIpv4 && isPublicIpLiteral(encodedIpv4) === false) return true;
   return host === "localhost" || host.endsWith(".localhost") || host === "localhost.localdomain" ||
     host.endsWith(".localhost.localdomain") || host === "localtest.me" || host.endsWith(".localtest.me") ||
     host === "lvh.me" || host.endsWith(".lvh.me") || host.endsWith(".local") || host.endsWith(".internal");
@@ -146,7 +136,7 @@ export function validatePublicHttpUrl(value: string, baseUrl?: string): string {
   const url = new URL(value, baseUrl);
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Feed URL must use HTTP(S)");
   if (url.username || url.password) throw new Error("Feed URL credentials are not allowed");
-  if (isLocalAlias(url.hostname) || isPrivateIpv4(url.hostname) || isPrivateIpv6(url.hostname)) {
+  if (isLocalAlias(url.hostname) || isPublicIpLiteral(url.hostname) === false) {
     throw new Error("Feed URL must target a public host");
   }
   url.hash = "";
@@ -219,10 +209,16 @@ function xmlEscape(value: string): string {
 }
 
 export function exportOpml(subscriptions: Subscription[]): string {
-  const normalized = subscriptions.map((subscription) => ({
-    title: subscription.title.trim() || subscription.url,
-    url: validatePublicHttpUrl(subscription.url),
-  })).sort((left, right) => left.url.localeCompare(right.url) || left.title.localeCompare(right.title));
+  const unique = new Map<string, Subscription>();
+  for (const subscription of subscriptions) {
+    const url = validatePublicHttpUrl(subscription.url);
+    const title = subscription.title.trim() || url;
+    const existing = unique.get(url);
+    if (!existing || title.localeCompare(existing.title) < 0) unique.set(url, { title, url });
+  }
+  const normalized = [...unique.values()].sort(
+    (left, right) => left.url.localeCompare(right.url) || left.title.localeCompare(right.title),
+  );
   const outlines = normalized.map((subscription) =>
     `    <outline text="${xmlEscape(subscription.title)}" xmlUrl="${xmlEscape(subscription.url)}" />`,
   ).join("\n");

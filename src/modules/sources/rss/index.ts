@@ -1,6 +1,12 @@
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 
-import type { ContentEnvelope, MediaAttachment, SafeBlock } from "../../../contracts";
+import {
+  ContentEnvelopeSchema,
+  type ContentEnvelope,
+  type MediaAttachment,
+  type SafeBlock,
+  type SourceAdapter,
+} from "../../../contracts";
 import {
   canonicalizeUrl,
   normalizeContentHtml,
@@ -28,6 +34,23 @@ export interface RssSourceAdapterOptions {
   maxBytes?: number;
   deadlineMs?: number;
   maxRedirects?: number;
+}
+
+export interface RssSyncRepository {
+  loadCursor(input: { sourceId: string }): Promise<string | undefined>;
+  isKnownContent(input: Pick<ContentEnvelope, "id" | "canonicalUri">): Promise<boolean>;
+  /** Must atomically persist items and advance the source cursor. */
+  commitSync(input: {
+    sourceId: string;
+    items: ContentEnvelope[];
+    nextCursor?: string;
+  }): Promise<void>;
+}
+
+export interface RssSynchronizerOptions {
+  sourceId: string;
+  adapter: SourceAdapter;
+  repository: RssSyncRepository;
 }
 
 type XmlRecord = Record<string, unknown>;
@@ -89,8 +112,7 @@ function appendDescription(blocks: SafeBlock[], content: unknown, baseUrl: strin
   const description = valueOf(content);
   if (!description) return;
   const normalized = normalizeContentHtml(description, baseUrl);
-  const fallback: SafeBlock = { kind: "paragraph", text: description };
-  blocks.push(...(normalized.length ? normalized : [fallback]));
+  blocks.push(...normalized);
 }
 
 function media(id: string, kind: "image" | "audio" | "video", url: string, sourceId: string, capturedAt: string, feedUrl: string): MediaAttachment {
@@ -247,7 +269,27 @@ function isRedirect(response: Response): boolean {
   return response.status >= 300 && response.status < 400;
 }
 
-export function createRssSourceAdapter(options: RssSourceAdapterOptions) {
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException("Feed deadline exceeded", "AbortError");
+}
+
+async function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(abortReason(signal));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+export function createRssSourceAdapter(options: RssSourceAdapterOptions): SourceAdapter {
   const maxBytes = options.maxBytes ?? defaultMaxBytes;
   const deadlineMs = options.deadlineMs ?? defaultDeadlineMs;
   const maxRedirects = options.maxRedirects ?? defaultMaxRedirects;
@@ -264,7 +306,10 @@ export function createRssSourceAdapter(options: RssSourceAdapterOptions) {
           const headers = new Headers({ accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, text/plain;q=0.5" });
           if (validators.etag) headers.set("if-none-match", validators.etag);
           if (validators.lastModified) headers.set("if-modified-since", validators.lastModified);
-          const response = await options.fetch(url, { headers, redirect: "manual", signal: controller.signal });
+          const response = await raceWithAbort(
+            options.fetch(url, { headers, redirect: "manual", signal: controller.signal }),
+            controller.signal,
+          );
           if (response.status === 304) return { items: [], ...(cursor ? { nextCursor: cursor } : {}) };
           if (isRedirect(response)) {
             const location = response.headers.get("location");
@@ -287,7 +332,9 @@ export function createRssSourceAdapter(options: RssSourceAdapterOptions) {
             ...(response.headers.get("last-modified") ? { lastModified: response.headers.get("last-modified")! } : {}),
           };
           return {
-            items: parseFeed(body, { feedUrl: url, sourceId: options.sourceId, capturedAt: now() }).items,
+            items: parseFeed(body, { feedUrl: url, sourceId: options.sourceId, capturedAt: now() }).items.map(
+              (item) => ContentEnvelopeSchema.parse(item),
+            ),
             ...(Object.keys(next).length ? { nextCursor: JSON.stringify(next) } : {}),
           };
         }
@@ -298,6 +345,28 @@ export function createRssSourceAdapter(options: RssSourceAdapterOptions) {
     },
     hydrate(): Promise<ContentEnvelope> {
       return Promise.reject(new Error("RSS entries are fully hydrated during feed sync"));
+    },
+  };
+}
+
+/** Coordinates adapter cursors with repository-owned atomic persistence. */
+export function createRssSynchronizer(options: RssSynchronizerOptions) {
+  return {
+    async sync(): Promise<{ items: ContentEnvelope[]; nextCursor?: string }> {
+      const cursor = await options.repository.loadCursor({ sourceId: options.sourceId });
+      const result = await options.adapter.sync(cursor);
+      const items: ContentEnvelope[] = [];
+      for (const item of result.items) {
+        if (!(await options.repository.isKnownContent({ id: item.id, canonicalUri: item.canonicalUri }))) {
+          items.push(item);
+        }
+      }
+      await options.repository.commitSync({
+        sourceId: options.sourceId,
+        items,
+        ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+      });
+      return { items, ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}) };
     },
   };
 }
