@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/v1/session", (route) =>
+    route.fulfill({ json: { authenticated: false } }),
+  );
+});
+
 test("serves the accessible reading shell and the preserved concept deck", async ({ page }) => {
   await page.goto("/");
 
