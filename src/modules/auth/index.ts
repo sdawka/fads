@@ -20,6 +20,7 @@ import type { ActorIdentifier } from "@atcute/lexicons/syntax";
 const APP_COOKIE = "fads_session";
 const IDLE_MS = 8 * 60 * 60 * 1000;
 const ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000;
+const REFRESH_LEASE_RENEW_MS = 15_000;
 
 export interface OwnerSessionStore {
   createAppSession(input: {
@@ -38,6 +39,7 @@ export interface OwnerSessionStore {
   putOAuthSession(input: { did: string; value: unknown }): Promise<void>;
   deleteOAuthSession(input: { did: string }): Promise<void>;
   tryAcquireRefreshLock(input: { name: string; holder: string; now: number }): Promise<boolean>;
+  renewRefreshLock(input: { name: string; holder: string; now: number }): Promise<boolean>;
   releaseRefreshLock(input: { name: string; holder: string }): Promise<void>;
 }
 
@@ -111,7 +113,13 @@ export function createAtprotoAuth(options: AtprotoAuthOptions) {
         return new Response("Invalid OAuth callback", { status: 400 });
       }
       if (callback.session.did !== options.ownerDid) {
-        await oauth.revoke(callback.session.did).catch(() => undefined);
+        try {
+          await oauth.revoke(callback.session.did);
+        } catch {
+          // The local SDK session must be removed even when upstream revocation is unavailable.
+        } finally {
+          await options.session.deleteOAuthSession({ did: callback.session.did });
+        }
         return new Response("This application is restricted to its configured owner", { status: 403 });
       }
       const token = randomToken();
@@ -206,9 +214,13 @@ function createDoRequestLock(session: OwnerSessionStore, now: () => number) {
     while (!(await session.tryAcquireRefreshLock({ name, holder, now: now() }))) {
       await new Promise<void>((resolve) => setTimeout(resolve, 15));
     }
+    const leaseHeartbeat = setInterval(() => {
+      void session.renewRefreshLock({ name, holder, now: now() }).catch(() => undefined);
+    }, REFRESH_LEASE_RENEW_MS);
     try {
       return await operation();
     } finally {
+      clearInterval(leaseHeartbeat);
       await session.releaseRefreshLock({ name, holder });
     }
   };
@@ -223,9 +235,16 @@ function httpsOrigin(value: string): string {
 }
 
 function publicJwk(jwk: ClientAssertionPrivateJwk): Record<string, unknown> {
-  const publicMembers: Record<string, unknown> = { ...jwk };
-  Reflect.deleteProperty(publicMembers, "d");
-  return publicMembers;
+  const input = jwk as unknown as Record<string, unknown>;
+  const common = pickPublic(input, ["kty", "kid", "use", "key_ops", "alg"]);
+  if (input.kty === "EC") return { ...common, ...pickPublic(input, ["crv", "x", "y"]) };
+  if (input.kty === "OKP") return { ...common, ...pickPublic(input, ["crv", "x"]) };
+  if (input.kty === "RSA") return { ...common, ...pickPublic(input, ["n", "e"]) };
+  throw new TypeError("Unsupported OAuth client JWK type");
+}
+
+function pickPublic(input: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  return Object.fromEntries(keys.flatMap((key) => input[key] === undefined ? [] : [[key, input[key]]]));
 }
 
 function randomToken(): string {

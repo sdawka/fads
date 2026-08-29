@@ -1,6 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import type { AppEnv } from "./app-env";
 
+const REFRESH_LEASE_MS = 5 * 60_000;
+
 export class OwnerSessionDO extends DurableObject<AppEnv> {
   constructor(ctx: DurableObjectState, env: AppEnv) {
     super(ctx, env);
@@ -142,7 +144,24 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
       "INSERT INTO refresh_locks (name, holder, expires_at) VALUES (?, ?, ?)",
       input.name,
       input.holder,
-      input.now + 30_000,
+      input.now + REFRESH_LEASE_MS,
+    );
+    return Promise.resolve(true);
+  }
+
+  renewRefreshLock(input: { name: string; holder: string; now: number }): Promise<boolean> {
+    const lease = Array.from(
+      this.ctx.storage.sql.exec<{ holder: string; expires_at: number }>(
+        "SELECT holder, expires_at FROM refresh_locks WHERE name = ?",
+        input.name,
+      ),
+    )[0];
+    if (!lease || lease.holder !== input.holder || lease.expires_at <= input.now) return Promise.resolve(false);
+    this.ctx.storage.sql.exec(
+      "UPDATE refresh_locks SET expires_at = ? WHERE name = ? AND holder = ?",
+      input.now + REFRESH_LEASE_MS,
+      input.name,
+      input.holder,
     );
     return Promise.resolve(true);
   }

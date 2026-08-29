@@ -4,6 +4,7 @@ import type {
   Evidence,
   SourceAdapter,
 } from "../../../contracts";
+import { ContentEnvelopeSchema, EvidenceSchema } from "../../../contracts";
 import { Client } from "@atcute/client";
 import type { OAuthSession } from "@atcute/oauth-node-client";
 
@@ -50,7 +51,7 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
     const response = await options.client.get("app.bsky.feed.getPosts", { params: { uris: [ref] } });
     const posts = response.ok ? object(response.data)?.posts : undefined;
     const post = array(posts)[0];
-    return normalizePost(post, { sourceId, capturedAt: now(), safetyLabels: options.safetyLabels });
+    return normalizePost(post, { sourceId, capturedAt: validTimestamp(now()), safetyLabels: options.safetyLabels });
   };
 
   return {
@@ -67,7 +68,7 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
       const feed = response.ok && Array.isArray(data?.feed) ? data.feed : [];
       const items = feed
         .map((entry) => object(entry)?.post)
-        .map((post) => normalizePost(post, { sourceId, capturedAt: now(), safetyLabels: options.safetyLabels }))
+        .map((post) => normalizePost(post, { sourceId, capturedAt: validTimestamp(now()), safetyLabels: options.safetyLabels }))
         .filter((entry): entry is ContentEnvelope => !isOmission(entry));
       const nextCursor = string(data?.cursor);
       return nextCursor ? { items, nextCursor } : { items };
@@ -81,23 +82,23 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
         options.client.get("app.bsky.graph.getActorStarterPacks", { params: { actor: options.ownerDid, limit: 100 } }),
         options.client.get("app.bsky.feed.getAuthorFeed", { params: { actor: options.ownerDid, limit: 100 } }),
       ]);
-      const observedAt = now();
+      const observedAt = validTimestamp(now());
       const evidence: Evidence[] = [];
       for (const follow of array(object(follows.data)?.follows)) {
         const did = string(object(follow)?.did);
-        if (did) evidence.push(evidenceFor(sourceId, `at://${did}`, observedAt, "follow"));
+        if (did) addEvidence(evidence, evidenceFor(sourceId, `at://${did}`, observedAt, "follow"));
       }
       for (const entry of array(object(likes.data)?.feed)) {
         const uri = string(object(object(entry)?.post)?.uri);
-        if (isCanonicalAtUri(uri)) evidence.push(evidenceFor(sourceId, uri, observedAt, "like"));
+        if (isCanonicalAtUri(uri)) addEvidence(evidence, evidenceFor(sourceId, uri, observedAt, "like"));
       }
       for (const pack of array(object(packs.data)?.starterPacks)) {
         const uri = string(object(pack)?.uri);
-        if (isCanonicalAtUri(uri)) evidence.push(evidenceFor(sourceId, uri, observedAt, "starter-pack"));
+        if (isCanonicalAtUri(uri)) addEvidence(evidence, evidenceFor(sourceId, uri, observedAt, "starter-pack"));
       }
       for (const entry of array(object(authored.data)?.feed)) {
         const uri = string(object(object(entry)?.post)?.uri);
-        if (isCanonicalAtUri(uri)) evidence.push(evidenceFor(sourceId, uri, observedAt, "authored"));
+        if (isCanonicalAtUri(uri)) addEvidence(evidence, evidenceFor(sourceId, uri, observedAt, "authored"));
       }
       return evidence;
     },
@@ -140,18 +141,20 @@ function normalizePost(
   const text = string(record?.text) ?? "";
   const blocks = text ? [{ kind: "paragraph" as const, text }] : [];
   const media: ContentEnvelope["media"] = [];
-  addEmbed(object(post.embed), blocks, media, options.sourceId, options.capturedAt);
-  return {
+  addEmbed(object(post.embed), blocks, media, options.sourceId, options.capturedAt, options.safetyLabels);
+  const candidate = {
     id: uri,
     canonicalUri: uri,
     sourceId: options.sourceId,
-    publishedAt: string(record?.createdAt) ?? string(post.indexedAt) ?? options.capturedAt,
+    publishedAt: validTimestamp(string(record?.createdAt), validTimestamp(string(post.indexedAt), options.capturedAt)),
     capturedAt: options.capturedAt,
     blocks,
     media,
     tags: [],
     labels,
   };
+  const parsed = ContentEnvelopeSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : { kind: "omitted", reason: "invalid", canonicalUri: uri };
 }
 
 function addEmbed(
@@ -160,6 +163,7 @@ function addEmbed(
   media: ContentEnvelope["media"],
   sourceId: string,
   observedAt: string,
+  safetyLabels: ReadonlySet<string>,
 ): void {
   if (!embed) return;
   const type = string(embed.$type) ?? "";
@@ -179,13 +183,14 @@ function addEmbed(
   if (type.includes("record")) {
     const record = object(embed.record);
     const nested = object(record?.record);
-    if (nested?.blocked || nested?.notFound) return;
-    const value = object(nested?.value);
-    const author = object(nested?.author);
-    const quoted = string(value?.text);
-    if (quoted) blocks.push({ kind: "quote", text: quoted, attribution: string(author?.displayName) ?? string(author?.handle) });
+    if (!nestedOmitted(nested, safetyLabels)) {
+      const value = object(nested?.value);
+      const author = object(nested?.author);
+      const quoted = string(value?.text);
+      if (quoted) blocks.push({ kind: "quote", text: quoted, attribution: string(author?.displayName) ?? string(author?.handle) });
+    }
   }
-  if (type.includes("recordWithMedia")) addEmbed(object(embed.media), blocks, media, sourceId, observedAt);
+  if (type.includes("recordWithMedia")) addEmbed(object(embed.media), blocks, media, sourceId, observedAt, safetyLabels);
 }
 
 function addImage(input: unknown, media: ContentEnvelope["media"], sourceId: string, observedAt: string): void {
@@ -207,10 +212,37 @@ function evidenceFor(sourceId: string, subjectUri: string, observedAt: string, k
   };
 }
 
+function addEvidence(items: Evidence[], candidate: Evidence): void {
+  const parsed = EvidenceSchema.safeParse(candidate);
+  if (parsed.success) items.push(parsed.data);
+}
+
 function labelValue(input: unknown, sourceId: string, observedAt: string): ContentEnvelope["labels"] {
   const label = object(input);
   const value = string(label?.val);
-  return value ? [{ value, provenance: { source: sourceId, observedAt, reference: string(label?.uri) } }] : [];
+  const reference = safeReference(string(label?.uri));
+  return value ? [{ value, provenance: { source: sourceId, observedAt, ...(reference ? { reference } : {}) } }] : [];
+}
+
+function nestedOmitted(record: Record<string, unknown> | undefined, safetyLabels: ReadonlySet<string>): boolean {
+  if (!record || record.blocked === true || record.notFound === true || record.deleted === true) return true;
+  const viewer = object(object(record.author)?.viewer);
+  if (viewer?.blocking || viewer?.blockedBy || viewer?.muted) return true;
+  return array(record.labels).some((label) => {
+    const value = string(object(label)?.val);
+    return value !== undefined && safetyLabels.has(value);
+  });
+}
+
+function validTimestamp(value: string | undefined, fallback = new Date().toISOString()): string {
+  if (value && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value))) {
+    return value;
+  }
+  return fallback;
+}
+
+function safeReference(value: string | undefined): string | undefined {
+  return isCanonicalAtUri(value) || safeHttpUrl(value) ? value : undefined;
 }
 
 function safeHttpUrl(value: string | undefined): string | undefined {

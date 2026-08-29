@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createAtprotoSource, createAtprotoSourceFromSession } from "../../src/modules/sources/atproto";
-import { EvidenceSchema } from "../../src/contracts";
+import { ContentEnvelopeSchema, EvidenceSchema } from "../../src/contracts";
 
 const ownerDid = "did:plc:owner123";
 const postUri = "at://did:plc:author123/app.bsky.feed.post/3kexample";
@@ -130,5 +130,142 @@ describe("AT Protocol source adapter", () => {
 
     expect(result).toMatchObject({ canonicalUri: postUri });
     expect(paths[0]).toContain("/xrpc/app.bsky.feed.getPosts");
+  });
+
+  it("sanitizes malformed protocol timestamps into schema-valid fallback values", async () => {
+    const source = createAtprotoSource({
+      ownerDid,
+      client: {
+        get: async () => ({
+          ok: true,
+          data: { posts: [{ ...fullPost, indexedAt: "not-a-datetime", record: { ...fullPost.record, createdAt: "also-not-a-datetime" } }] },
+        }),
+      },
+      safetyLabels: new Set(),
+      now: () => "not-a-datetime",
+    });
+
+    const result = await source.tryHydrate(postUri);
+    expect(ContentEnvelopeSchema.safeParse(result).success).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("not-a-datetime");
+  });
+
+  it("returns a typed invalid omission instead of a malformed contract output", async () => {
+    const source = createAtprotoSource({
+      ownerDid,
+      sourceId: " ",
+      client: { get: async () => ({ ok: true, data: { posts: [fullPost] } }) },
+      safetyLabels: new Set(),
+    });
+
+    await expect(source.tryHydrate(postUri)).resolves.toEqual({ kind: "omitted", reason: "invalid", canonicalUri: postUri });
+  });
+
+  it("keeps external and video embeds inert while producing a schema-valid envelope", async () => {
+    const source = createAtprotoSource({
+      ownerDid,
+      client: {
+        get: async () => ({
+          ok: true,
+          data: {
+            posts: [
+              {
+                ...fullPost,
+                embed: {
+                  $type: "app.bsky.embed.external#view",
+                  external: { uri: "https://example.com/article", title: "Read this", description: "<script>never render</script>" },
+                },
+              },
+            ],
+          },
+        }),
+      },
+      safetyLabels: new Set(),
+      now: () => "2026-08-28T12:05:00.000Z",
+    });
+
+    const external = await source.tryHydrate(postUri);
+    expect(external).toMatchObject({ blocks: expect.arrayContaining([{ kind: "link", href: "https://example.com/article", text: "Read this" }]) });
+    expect(JSON.stringify(external)).not.toContain("<script>");
+    expect(ContentEnvelopeSchema.safeParse(external).success).toBe(true);
+
+    const videoSource = createAtprotoSource({
+      ownerDid,
+      client: {
+        get: async () => ({
+          ok: true,
+          data: { posts: [{ ...fullPost, embed: { $type: "app.bsky.embed.video#view", cid: "bafyvideo", playlist: "https://video.example/playlist.m3u8", thumbnail: "https://video.example/thumb.jpg", aspectRatio: { width: 16, height: 9 } } }] },
+        }),
+      },
+      safetyLabels: new Set(),
+      now: () => "2026-08-28T12:05:00.000Z",
+    });
+    await expect(videoSource.tryHydrate(postUri)).resolves.toMatchObject({ media: [{ kind: "video", url: "https://video.example/playlist.m3u8" }] });
+  });
+
+  it("does not emit a quoted record when nested protocol moderation blocks it", async () => {
+    const nested = {
+      ...fullPost,
+      labels: [],
+      embed: {
+        ...fullPost.embed,
+        record: {
+          ...fullPost.embed.record,
+          record: {
+            ...fullPost.embed.record.record,
+            author: { ...fullPost.embed.record.record.author, viewer: { muted: true } },
+            labels: [{ src: "did:plc:labeler", uri: "at://did:plc:quoted123/app.bsky.feed.post/3kquoted", val: "sexual", cts: "2026-08-28T12:00:00.000Z" }],
+          },
+        },
+      },
+    };
+    const source = createAtprotoSource({
+      ownerDid,
+      client: { get: async () => ({ ok: true, data: { posts: [nested] } }) },
+      safetyLabels: new Set(["sexual"]),
+      now: () => "2026-08-28T12:05:00.000Z",
+    });
+
+    const result = await source.tryHydrate(postUri);
+
+    expect(result).toMatchObject({ media: [{ kind: "image", url: "https://cdn.example/full.jpg" }] });
+    expect(JSON.stringify(result)).not.toContain("Quoted material");
+  });
+
+  it("omits nested deleted, blocked, muted, and safety-labelled record text", async () => {
+    const nestedVariants = [
+      { notFound: true },
+      { deleted: true },
+      { blocked: true },
+      { author: { ...fullPost.embed.record.record.author, viewer: { muted: true } } },
+      { labels: [{ src: "did:plc:labeler", uri: "at://did:plc:quoted123/app.bsky.feed.post/3kquoted", val: "sexual", cts: "2026-08-28T12:00:00.000Z" }] },
+    ];
+    let index = 0;
+    const source = createAtprotoSource({
+      ownerDid,
+      client: {
+        get: async () => ({
+          ok: true,
+          data: {
+            posts: nestedVariants.map((variant) => ({
+              ...fullPost,
+              labels: [],
+              embed: {
+                ...fullPost.embed,
+                record: { ...fullPost.embed.record, record: { ...fullPost.embed.record.record, ...variant } },
+              },
+            })).slice(index++, index),
+          },
+        }),
+      },
+      safetyLabels: new Set(["sexual"]),
+      now: () => "2026-08-28T12:05:00.000Z",
+    });
+
+    for (const _variant of nestedVariants) {
+      const result = await source.tryHydrate(postUri);
+      expect(JSON.stringify(result)).not.toContain("Quoted material");
+      expect(ContentEnvelopeSchema.safeParse(result).success).toBe(true);
+    }
   });
 });

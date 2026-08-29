@@ -45,4 +45,14 @@ describe("OwnerSessionDO", () => {
     });
     expect(row.count).toBe(0);
   });
+
+  it("retains and renews a refresh lease beyond thirty seconds", async () => {
+    const appEnv = env as unknown as AppEnv;
+    const stub = appEnv.OWNER_SESSION.getByName("owner-refresh");
+
+    await expect(stub.tryAcquireRefreshLock({ name: "oauth-session-owner", holder: "first", now: 0 })).resolves.toBe(true);
+    await expect(stub.tryAcquireRefreshLock({ name: "oauth-session-owner", holder: "second", now: 30_001 })).resolves.toBe(false);
+    await expect(stub.renewRefreshLock({ name: "oauth-session-owner", holder: "first", now: 240_000 })).resolves.toBe(true);
+    await expect(stub.tryAcquireRefreshLock({ name: "oauth-session-owner", holder: "second", now: 300_001 })).resolves.toBe(false);
+  });
 });
