@@ -2,6 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import { createFetchHandler } from "../../src/worker-routing";
 
 describe("Worker fetch routing", () => {
+  it("adds browser security headers to application and health responses", async () => {
+    const fetch = createFetchHandler(async () => new Response("rendered by Astro"));
+
+    for (const path of ["/", "/api/health"]) {
+      const response = await fetch(
+        new Request(`https://fads.cc${path}`),
+        {} as Env,
+        {} as ExecutionContext,
+      );
+      expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(response.headers.get("permissions-policy")).toContain("camera=()");
+    }
+  });
+
   it("delegates non-API traffic to the supplied Astro handler", async () => {
     const fetch = createFetchHandler(async () => new Response("rendered by Astro"));
 
