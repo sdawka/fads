@@ -107,6 +107,17 @@ describe("AT Protocol source adapter", () => {
     ]);
   });
 
+  it("surfaces failed XRPC responses for retry instead of committing an empty feed", async () => {
+    const source = createAtprotoSource({
+      ownerDid,
+      client: { get: async () => ({ ok: false, status: 503, data: { error: "Unavailable" } }) },
+      safetyLabels: new Set(),
+    });
+
+    await expect(source.sync()).rejects.toMatchObject({ status: 503 });
+    await expect(source.tryHydrate(postUri)).rejects.toMatchObject({ status: 503 });
+  });
+
   it("normalizes a canonical DID post URI and makes record-with-media inert safe blocks", async () => {
     const source = createAtprotoSource({
       ownerDid,

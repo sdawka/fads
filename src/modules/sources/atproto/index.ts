@@ -10,6 +10,7 @@ import type { OAuthSession } from "@atcute/oauth-node-client";
 
 export interface XrpcResponse {
   ok: boolean;
+  status?: number;
   data: unknown;
 }
 
@@ -53,7 +54,8 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
     const response = await options.client.get("app.bsky.feed.getPosts", {
       params: { uris: [ref] },
     });
-    const posts = response.ok ? object(response.data)?.posts : undefined;
+    assertXrpcResponse(response);
+    const posts = object(response.data)?.posts;
     const post = array(posts)[0];
     return normalizePost(post, {
       sourceId,
@@ -82,8 +84,9 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
               : { cursor, limit: 100 },
         },
       );
+      assertXrpcResponse(response);
       const data = object(response.data);
-      const feed = response.ok && Array.isArray(data?.feed) ? data.feed : [];
+      const feed = Array.isArray(data?.feed) ? data.feed : [];
       const items = feed
         .map((entry) => object(entry)?.post)
         .map((post) =>
@@ -115,6 +118,7 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
         }),
       ]);
       const observedAt = validTimestamp(now());
+      for (const response of [follows, likes, packs, authored]) assertXrpcResponse(response);
       const evidence: Evidence[] = [];
       for (const follow of array(object(follows.data)?.follows)) {
         const did = string(object(follow)?.did);
@@ -138,6 +142,15 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
       return evidence;
     },
   };
+}
+
+function assertXrpcResponse(response: XrpcResponse): void {
+  if (response.ok) return;
+  const status =
+    typeof response.status === "number" && Number.isFinite(response.status)
+      ? response.status
+      : 502;
+  throw Object.assign(new Error(`AT Protocol request failed with ${status}`), { status });
 }
 
 export function createAtprotoSourceFromSession(options: SessionBoundAtprotoSourceOptions) {
