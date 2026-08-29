@@ -1,16 +1,21 @@
 import { env } from "cloudflare:workers";
 import {
+  applyD1Migrations,
   createExecutionContext,
   createMessageBatch,
   createScheduledController,
   getQueueResult,
 } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { AppEnv } from "../../src/app-env";
 import type { QueueMessage } from "../../src/contracts";
 import worker from "../fixtures/worker";
 
 const appEnv = env as unknown as AppEnv;
+
+beforeAll(async () => {
+  await applyD1Migrations(appEnv.DB, env.TEST_MIGRATIONS);
+});
 
 describe("foundation Worker", () => {
   it("serves an observable health response without delegating API traffic to Astro", async () => {
@@ -32,7 +37,7 @@ describe("foundation Worker", () => {
       },
     ]);
 
-    await worker.queue(batch);
+    await worker.queue(batch, appEnv, context);
 
     await expect(getQueueResult(batch, context)).resolves.toMatchObject({ outcome: "ok" });
   });
@@ -40,7 +45,7 @@ describe("foundation Worker", () => {
   it("accepts the configured schedule without retrying it", async () => {
     const controller = createScheduledController({ cron: "*/15 * * * *" });
 
-    await worker.scheduled(controller);
+    await worker.scheduled(controller, appEnv, createExecutionContext());
 
     expect(controller.cron).toBe("*/15 * * * *");
   });

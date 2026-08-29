@@ -1,0 +1,4 @@
+OWNER_DID=did:plc:replace-with-your-owner-did
+APP_ORIGIN=https://localhost.example
+ATPROTO_OAUTH_PRIVATE_JWKS=[{"kty":"EC","kid":"replace-me","alg":"ES256","crv":"P-256","x":"replace-me","y":"replace-me","d":"replace-me"}]
+SAFETY_LABELS_JSON=["porn","graphic-media"]
