@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { MemoryEditionRepository } from "../../src/modules/editions";
-import type { RecommendationSlate } from "../../src/contracts";
+import type { DecisionTrace, RecommendationSlate } from "../../src/contracts";
+import type { CandidateDecision } from "../../src/modules/curation";
 
 const createdAt = "2026-08-28T12:00:00.000Z";
 
-function slate(id = "edition-1", count = 2): RecommendationSlate {
+function slate(id = "edition-1", count = 2, ownerId = "owner"): RecommendationSlate {
   return {
     id,
-    ownerId: "owner",
+    ownerId,
     createdAt,
     curiosity: 50,
     energy: 50,
@@ -35,6 +36,25 @@ function slate(id = "edition-1", count = 2): RecommendationSlate {
         },
       ],
     },
+  };
+}
+
+function decision(decisionKey: string, contentId: string, selected = false): CandidateDecision {
+  const trace: DecisionTrace = {
+    factors: [
+      {
+        factor: selected ? "selected" : "excluded:not-selected",
+        weight: selected ? 1 : 0,
+        provenance: { source: "curation", observedAt: createdAt },
+      },
+    ],
+  };
+  return {
+    decisionKey,
+    contentId,
+    canonicalUri: `https://example.com/${decisionKey}`,
+    selected,
+    decisionTrace: trace,
   };
 }
 
@@ -113,5 +133,24 @@ describe("edition repository lifecycle", () => {
     await repository.removeKeep("owner", "content");
     expect(await repository.listKeeps("owner")).toEqual([]);
     expect(await repository.listKeeps("other")).not.toEqual([]);
+  });
+
+  it("keeps same edition ids and lossless decisions isolated by owner", async () => {
+    const repository = new MemoryEditionRepository();
+    const ownerEdition = slate("shared-id", 1, "owner");
+    const otherEdition = slate("shared-id", 1, "other");
+    otherEdition.items[0] = { ...otherEdition.items[0]!, contentId: "other-content" };
+
+    await repository.saveEdition(ownerEdition, [decision("same#0", "owner-content", true)]);
+    await repository.saveEdition(otherEdition, [
+      decision("same#0", "other-content", false),
+      decision("same#1", "other-content", false),
+    ]);
+
+    expect(await repository.getEdition("owner", "shared-id")).toEqual(ownerEdition);
+    expect(await repository.getEdition("other", "shared-id")).toEqual(otherEdition);
+    expect(await repository.getEdition("unknown", "shared-id")).toBeUndefined();
+    expect(await repository.getDecisions("owner", "shared-id")).toHaveLength(1);
+    expect(await repository.getDecisions("other", "shared-id")).toHaveLength(2);
   });
 });

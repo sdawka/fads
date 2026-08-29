@@ -111,6 +111,125 @@ describe("deterministic curation", () => {
       "already-shown",
       "duplicate-canonical",
     ]);
+    const labelledTrace = result.excluded.find(
+      (decision) => decision.reason === "configured-label",
+    )?.decisionTrace;
+    expect(labelledTrace?.factors).toEqual(
+      expect.arrayContaining([expect.objectContaining({ factor: "label:spoiler", weight: 0 })]),
+    );
+    expect(
+      labelledTrace?.factors.find((factor) => factor.factor === "label:spoiler")?.provenance,
+    ).toMatchObject({
+      source: "labels",
+      observedAt: requestedAt,
+      reference: "https://example.com/labelled",
+    });
+    const mutedTrace = result.excluded.find(
+      (decision) => decision.reason === "muted-source",
+    )?.decisionTrace;
+    expect(mutedTrace?.factors.map((factor) => factor.factor)).toContain("source:muted-source");
+  });
+
+  it("checks content and canonical suppression aliases independently", () => {
+    const candidate = content("alias-id", "source", "systems");
+    candidate.canonicalUri = "https://example.com/alias";
+    const notNowResult = new CurationEngine().generate(
+      { ownerId: "owner", requestedAt, curiosity: 100, energy: 50, limit: 12 },
+      [candidate],
+      {
+        notNow: [
+          { contentId: "alias-id", until: "not-a-date" },
+          { canonicalUri: candidate.canonicalUri, until: "2026-09-01T12:00:00.000Z" },
+        ],
+      },
+    );
+    const shownResult = new CurationEngine().generate(
+      { ownerId: "owner", requestedAt, curiosity: 100, energy: 50, limit: 12 },
+      [candidate],
+      {
+        recentlyShown: [
+          { contentId: "alias-id", shownAt: "not-a-date" },
+          { canonicalUri: candidate.canonicalUri, shownAt: "2026-08-20T12:00:00.000Z" },
+        ],
+      },
+    );
+
+    expect(notNowResult.slate.items).toEqual([]);
+    expect(notNowResult.excluded[0]?.reason).toBe("not-now");
+    expect(
+      notNowResult.excluded[0]?.decisionTrace.factors.map((factor) => factor.factor),
+    ).toContain("not-now-until:2026-09-01T12:00:00.000Z");
+    expect(shownResult.slate.items).toEqual([]);
+    expect(shownResult.excluded[0]?.reason).toBe("already-shown");
+    expect(shownResult.excluded[0]?.decisionTrace.factors.map((factor) => factor.factor)).toContain(
+      "shown-at:2026-08-20T12:00:00.000Z",
+    );
+  });
+
+  it("honors exact seven-day and thirty-day suppression boundaries", () => {
+    const candidate = content("boundary", "source", "systems");
+    const notNowBoundary = new CurationEngine().generate(
+      { ownerId: "owner", requestedAt, curiosity: 100, energy: 50, limit: 1 },
+      [candidate],
+      { notNow: [{ contentId: candidate.id, until: requestedAt }] },
+    );
+    const shownBoundary = new CurationEngine().generate(
+      { ownerId: "owner", requestedAt, curiosity: 100, energy: 50, limit: 1 },
+      [candidate],
+      { recentlyShown: [{ contentId: candidate.id, shownAt: "2026-07-29T12:00:00.000Z" }] },
+    );
+
+    expect(notNowBoundary.slate.items).toHaveLength(1);
+    expect(shownBoundary.slate.items).toHaveLength(1);
+  });
+
+  it("records numeric scoring contributions and named matched factors", () => {
+    const candidate = content("trace", "source", "systems");
+    const result = new CurationEngine().generate(
+      { ownerId: "owner", requestedAt, curiosity: 0, energy: 18, limit: 1 },
+      [candidate],
+      {
+        manualInterests: ["systems"],
+        learnedAdjustments: {
+          "tag:systems": 3,
+          "source:source": -2,
+          "format:text": 1,
+          "content:trace": 4,
+        },
+      },
+    );
+
+    const decision = result.decisions.find((entry) => entry.selected);
+    const factors = decision?.decisionTrace.factors ?? [];
+    expect(factors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ factor: "interest-match", weight: 36 }),
+        expect.objectContaining({ factor: "interest:systems", weight: 36 }),
+        expect.objectContaining({ factor: "freshness", weight: 20 }),
+        expect.objectContaining({ factor: "energy-fit", weight: 30 }),
+        expect.objectContaining({ factor: "learned:tag:systems", weight: 3 }),
+        expect.objectContaining({ factor: "learned:source:source", weight: -2 }),
+        expect.objectContaining({ factor: "learned:format:text", weight: 1 }),
+        expect.objectContaining({ factor: "learned:content:trace", weight: 4 }),
+      ]),
+    );
+    expect(factors.some((factor) => /probability|confidence/i.test(factor.factor))).toBe(false);
+  });
+
+  it("retains duplicate-id decisions under distinct stable keys", () => {
+    const first = content("same", "source-a", "systems");
+    const second = content("same", "source-b", "systems");
+    second.canonicalUri = "https://example.com/other";
+    const result = new CurationEngine().generate(
+      { ownerId: "owner", requestedAt, curiosity: 0, energy: 50, limit: 12 },
+      [first, second],
+      { seed: "duplicate" },
+    );
+
+    expect(result.decisions).toHaveLength(2);
+    expect(new Set(result.decisions.map((decision) => decision.decisionKey)).size).toBe(2);
+    expect(result.decisions.map((decision) => decision.contentId)).toEqual(["same", "same"]);
+    expect(result.traces.size).toBe(2);
   });
 
   it("traces malformed unsafe candidates without throwing while evaluating policy", () => {

@@ -19,7 +19,7 @@ export class EditionService {
     options: CurationOptions = {},
   ): Promise<CurationResult> {
     const result = this.engine.generate(request, candidates, options);
-    await this.repository.saveEdition(result.slate, result.traces);
+    await this.repository.saveEdition(result.slate, result.decisions);
     return result;
   }
 

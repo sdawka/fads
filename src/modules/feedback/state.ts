@@ -131,7 +131,10 @@ export function applyInteraction(
   if (event.kind === "not_now") {
     if (!event.contentId) throw new Error("not_now requires contentId");
     const until = new Date(new Date(event.occurredAt).getTime() + SEVEN_DAYS_MS).toISOString();
-    next.notNow = { ...state.notNow, [normalize(event.contentId)]: until };
+    const notNow = { ...state.notNow, [normalize(event.contentId)]: until };
+    const canonicalUri = context?.content?.canonicalUri;
+    if (canonicalUri) notNow[normalize(canonicalUri)] = until;
+    next.notNow = notNow;
   }
   if (event.kind === "mute_source") {
     if (!event.sourceId) throw new Error("mute_source requires sourceId");
@@ -161,8 +164,8 @@ export function resetFeedback(state: FeedbackState, options: ResetOptions = {}):
   return makeState({
     ownerId: state.ownerId,
     manualInterests: state.manualInterests,
-    mutedSources: state.mutedSources,
     keeps: state.keeps,
+    appliedInteractionIds: state.appliedInteractionIds,
   });
 }
 

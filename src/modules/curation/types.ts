@@ -66,6 +66,8 @@ export type ExclusionReason =
   | "not-selected";
 
 export interface CandidateDecision {
+  /** Stable per-input key; content ids are not unique enough for decision storage. */
+  decisionKey: string;
   contentId: string;
   canonicalUri?: string;
   selected: boolean;
@@ -77,6 +79,9 @@ export interface CurationResult {
   slate: RecommendationSlate;
   selected: readonly ContentEnvelope[];
   excluded: readonly CandidateDecision[];
+  /** Lossless ordered decisions, including selected and excluded candidates. */
+  decisions: readonly CandidateDecision[];
+  /** Decision traces keyed by the lossless decision key. */
   traces: ReadonlyMap<string, DecisionTrace>;
   seed: number;
 }

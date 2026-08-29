@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyInteraction, createFeedbackState, resetFeedback } from "../../src/modules/feedback";
-import type { InteractionEvent } from "../../src/contracts";
+import type { ContentEnvelope, InteractionEvent } from "../../src/contracts";
 
 const first = "2026-08-28T12:00:00.000Z";
 
@@ -40,10 +40,19 @@ describe("feedback state", () => {
     const state = applyInteraction(
       createFeedbackState({ ownerId: "owner" }),
       event("not_now", "later"),
+      {
+        content: {
+          ...eventContent("later", "https://example.com/later"),
+        },
+      },
     );
 
     expect(state.notNow.content).toBe("2026-09-04T12:00:00.000Z");
+    expect(state.notNow["https://example.com/later"]).toBe("2026-09-04T12:00:00.000Z");
     expect(state.isSuppressed("content", "2026-09-04T11:59:59.999Z")).toBe(true);
+    expect(
+      state.isSuppressed("different-id", "2026-09-04T11:59:59.999Z", "https://example.com/later"),
+    ).toBe(true);
     expect(state.isSuppressed("content", "2026-09-04T12:00:00.000Z")).toBe(false);
   });
 
@@ -68,11 +77,30 @@ describe("feedback state", () => {
     expect(reset.manualInterests).toEqual(["manual"]);
     expect(reset.learnedAdjustments).toEqual({});
     expect(reset.notNow).toEqual({});
-    expect(reset.mutedSources).toEqual(["source"]);
+    expect(reset.mutedSources).toEqual([]);
+    expect(reset.appliedInteractionIds).toEqual(["more", "later", "mute"]);
+
+    const replayed = applyInteraction(reset, event("more_like_this", "more"));
+    expect(replayed).toEqual(reset);
 
     const full = resetFeedback(state, { full: true });
     expect(full.manualInterests).toEqual([]);
     expect(full.mutedSources).toEqual([]);
     expect(full.keeps).toEqual([]);
+    expect(full.appliedInteractionIds).toEqual([]);
   });
 });
+
+function eventContent(id: string, canonicalUri: string): ContentEnvelope {
+  return {
+    id,
+    canonicalUri,
+    sourceId: "source",
+    publishedAt: first,
+    capturedAt: first,
+    blocks: [{ kind: "paragraph", text: id }],
+    media: [],
+    tags: [],
+    labels: [],
+  };
+}

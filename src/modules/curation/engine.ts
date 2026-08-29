@@ -25,9 +25,26 @@ interface PreparedCandidate {
   format: string;
   energy: number;
   matchedInterests: string[];
+  scoreBreakdown: ScoreBreakdown;
   score: number;
   exploration: boolean;
   inputIndex: number;
+  decisionKey: string;
+}
+
+interface TraceFactorInput {
+  factor: string;
+  weight: number;
+  reference?: string;
+  source?: string;
+  observedAt?: string;
+}
+
+interface PolicyFact {
+  factor: string;
+  source: string;
+  reference?: string;
+  observedAt?: string;
 }
 
 interface CandidateWithReason {
@@ -35,6 +52,21 @@ interface CandidateWithReason {
   contentId: string;
   canonicalUri?: string;
   reason: ExclusionReason;
+  inputIndex: number;
+  decisionKey: string;
+  policyFacts?: readonly PolicyFact[];
+}
+
+interface LearnedContribution {
+  factor: string;
+  weight: number;
+}
+
+interface ScoreBreakdown {
+  interest: number;
+  freshness: number;
+  energyFit: number;
+  learned: readonly LearnedContribution[];
 }
 
 function normalize(value: string): string {
@@ -61,12 +93,18 @@ function mapValues(value: CurationProfile["learnedAdjustments"]): Map<string, nu
   return output;
 }
 
-function lookupDates(value: CurationProfile["notNow"]): Map<string, string> {
+function addAliasValue(map: Map<string, string[]>, alias: string, value: string): void {
+  const key = normalize(alias);
+  if (!key) return;
+  map.set(key, [...(map.get(key) ?? []), value]);
+}
+
+function lookupDates(value: CurationProfile["notNow"]): Map<string, string[]> {
   if (!value) return new Map();
-  const output = new Map<string, string>();
+  const output = new Map<string, string[]>();
   if (value instanceof Map) {
     for (const [key, date] of value.entries() as Iterable<[string, string]>)
-      output.set(normalize(key), date);
+      addAliasValue(output, key, date);
     return output;
   }
   if (isNotNowList(value)) {
@@ -74,12 +112,12 @@ function lookupDates(value: CurationProfile["notNow"]): Map<string, string> {
       const keys = [entry.contentId, entry.canonicalUri].filter((key): key is string =>
         Boolean(key),
       );
-      for (const key of keys) output.set(normalize(key), entry.until);
+      for (const key of keys) addAliasValue(output, key, entry.until);
     }
     return output;
   }
   const entries = Object.entries(value) as Array<[string, string]>;
-  for (const [key, date] of entries) output.set(normalize(key), date);
+  for (const [key, date] of entries) addAliasValue(output, key, date);
   return output;
 }
 
@@ -90,16 +128,14 @@ function isNotNowList(
   return Array.isArray(value);
 }
 
-function lookupShown(value: CurationProfile["recentlyShown"]): Map<string, string> {
+function lookupShown(value: CurationProfile["recentlyShown"]): Map<string, string[]> {
   if (!value) return new Map();
-  return new Map(
-    value.flatMap((entry) => {
-      const keys = [entry.contentId, entry.canonicalUri].filter((key): key is string =>
-        Boolean(key),
-      );
-      return keys.map((key) => [normalize(key), entry.shownAt] as const);
-    }),
-  );
+  const output = new Map<string, string[]>();
+  for (const entry of value) {
+    const keys = [entry.contentId, entry.canonicalUri].filter((key): key is string => Boolean(key));
+    for (const key of keys) addAliasValue(output, key, entry.shownAt);
+  }
+  return output;
 }
 
 function hashSeed(value: string): number {
@@ -200,8 +236,8 @@ function referenceFor(value: string | undefined): string | undefined {
   return undefined;
 }
 
-function provenance(requestedAt: string, source: string, reference?: string): Provenance {
-  const value: Provenance = { source, observedAt: requestedAt };
+function provenance(observedAt: string, source: string, reference?: string): Provenance {
+  const value: Provenance = { source, observedAt };
   const safeReference = referenceFor(reference);
   if (safeReference) value.reference = safeReference;
   return value;
@@ -210,7 +246,7 @@ function provenance(requestedAt: string, source: string, reference?: string): Pr
 function trace(
   requestedAt: string,
   source: string,
-  factors: Array<{ factor: string; weight: number; reference?: string }>,
+  factors: readonly TraceFactorInput[],
   reference?: string,
 ): DecisionTrace {
   return DecisionTraceSchema.parse({
@@ -218,7 +254,11 @@ function trace(
     factors: factors.map((factor) => ({
       factor: factor.factor,
       weight: Number.isFinite(factor.weight) ? factor.weight : 0,
-      provenance: provenance(requestedAt, source, factor.reference ?? reference),
+      provenance: provenance(
+        factor.observedAt ?? requestedAt,
+        factor.source ?? source,
+        factor.reference ?? reference,
+      ),
     })),
   });
 }
@@ -237,30 +277,38 @@ function scoreCandidate(
   adjustments: ReadonlyMap<string, number>,
   targetEnergy: number,
   requestedAt: string,
-): { score: number; matchedInterests: string[] } {
+): { score: number; matchedInterests: string[]; scoreBreakdown: ScoreBreakdown } {
   const tags = item.tags.map((tag) => normalize(tag.value));
   const matchedInterests = interests.filter((interest) => tags.includes(interest));
   const interestScore = matchedInterests.length * 36;
   const age = Math.max(0, new Date(requestedAt).getTime() - new Date(item.publishedAt).getTime());
   const freshness = Math.max(0, 20 - Math.min(20, age / (7 * DAY_MS)));
   const energyFit = Math.max(0, 30 - Math.abs(energy - targetEnergy) * 0.3);
-  const tagAdjustment = tags.reduce(
-    (total, tag) => total + (adjustments.get(`tag:${tag}`) ?? 0),
-    0,
-  );
-  const sourceAdjustment = adjustments.get(`source:${normalize(item.sourceId)}`) ?? 0;
-  const formatAdjustment = adjustments.get(`format:${normalize(format)}`) ?? 0;
-  const contentAdjustment = adjustments.get(`content:${normalize(item.id)}`) ?? 0;
+  const learned: LearnedContribution[] = [];
+  for (const tag of tags) {
+    const weight = adjustments.get(`tag:${tag}`) ?? 0;
+    if (weight !== 0) learned.push({ factor: `learned:tag:${tag}`, weight });
+  }
+  const learnedKeys = [
+    `source:${normalize(item.sourceId)}`,
+    `format:${normalize(format)}`,
+    `content:${normalize(item.id)}`,
+  ];
+  for (const key of learnedKeys) {
+    const weight = adjustments.get(key) ?? 0;
+    if (weight !== 0) learned.push({ factor: `learned:${key}`, weight });
+  }
+  const learnedScore = learned.reduce((total, contribution) => total + contribution.weight, 0);
+  const scoreBreakdown: ScoreBreakdown = {
+    interest: interestScore,
+    freshness,
+    energyFit,
+    learned,
+  };
   return {
     matchedInterests,
-    score:
-      interestScore +
-      freshness +
-      energyFit +
-      tagAdjustment +
-      sourceAdjustment +
-      formatAdjustment +
-      contentAdjustment,
+    score: interestScore + freshness + energyFit + learnedScore,
+    scoreBreakdown,
   };
 }
 
@@ -274,44 +322,117 @@ function isSuppressedUntil(value: string, nowMs: number): boolean {
   return Number.isFinite(timestamp) && timestamp > nowMs;
 }
 
+function activeAliases(
+  values: readonly string[] | undefined,
+  nowMs: number,
+  predicate: (value: string, nowMs: number) => boolean,
+): string[] {
+  return (values ?? []).filter((value) => predicate(value, nowMs));
+}
+
+function suppressionFacts(
+  values: ReadonlyMap<string, string[]>,
+  aliases: readonly string[],
+  nowMs: number,
+  kind: "not-now" | "shown",
+  reference?: string,
+): PolicyFact[] {
+  const facts: PolicyFact[] = [];
+  for (const alias of aliases) {
+    const valuesForAlias = values.get(alias) ?? [];
+    const active = activeAliases(
+      valuesForAlias,
+      nowMs,
+      kind === "not-now"
+        ? isSuppressedUntil
+        : (value, at) => isBeforeBoundary(value, at, THIRTY_DAYS_MS),
+    );
+    for (const value of active) {
+      facts.push({
+        factor: kind === "not-now" ? `not-now-until:${value}` : `shown-at:${value}`,
+        source: "feedback-state",
+        reference,
+      });
+    }
+  }
+  return facts;
+}
+
 function exclusionDecision(requestedAt: string, candidate: CandidateWithReason): CandidateDecision {
+  const policyFactors: TraceFactorInput[] = [
+    {
+      factor: `excluded:${candidate.reason}`,
+      weight: 0,
+      reference: candidate.canonicalUri,
+      source: `policy:${candidate.reason}`,
+    },
+    ...(candidate.policyFacts ?? []).map((fact) => ({
+      factor: fact.factor,
+      weight: 0,
+      reference: fact.reference ?? candidate.canonicalUri,
+      source: fact.source,
+      observedAt: fact.observedAt,
+    })),
+  ];
   return {
+    decisionKey: candidate.decisionKey,
     contentId: candidate.contentId,
     canonicalUri: candidate.canonicalUri,
     selected: false,
     reason: candidate.reason,
-    decisionTrace: trace(
-      requestedAt,
-      "policy",
-      [{ factor: `excluded:${candidate.reason}`, weight: 0, reference: candidate.canonicalUri }],
-      candidate.canonicalUri,
-    ),
+    decisionTrace: trace(requestedAt, "policy", policyFactors, candidate.canonicalUri),
   };
 }
 
 function selectedTrace(
   requestedAt: string,
   candidate: PreparedCandidate,
-  targetEnergy: number,
   exploration: boolean,
 ): DecisionTrace {
   return trace(
     requestedAt,
     "curation",
     [
-      ...(candidate.matchedInterests.length
-        ? [{ factor: "interest-match", weight: candidate.matchedInterests.length }]
-        : []),
-      { factor: "freshness", weight: 1 },
-      { factor: "energy-fit", weight: Math.round(100 - Math.abs(candidate.energy - targetEnergy)) },
+      ...scoringTraceFactors(candidate),
       { factor: exploration ? "exploration" : "exploitation", weight: 1 },
     ],
     candidate.item.canonicalUri,
   );
 }
 
+function scoringTraceFactors(candidate: PreparedCandidate): TraceFactorInput[] {
+  return [
+    ...(candidate.matchedInterests.length
+      ? [
+          {
+            factor: "interest-match",
+            weight: candidate.scoreBreakdown.interest,
+          },
+          ...candidate.matchedInterests.map((interest) => ({
+            factor: `interest:${interest}`,
+            weight: 36,
+          })),
+        ]
+      : [{ factor: "interest-contribution", weight: 0 }]),
+    { factor: "freshness", weight: candidate.scoreBreakdown.freshness },
+    { factor: "energy-fit", weight: candidate.scoreBreakdown.energyFit },
+    ...(candidate.scoreBreakdown.learned.length
+      ? candidate.scoreBreakdown.learned
+      : [{ factor: "learned-contribution", weight: 0 }]),
+  ];
+}
+
 function frameFor(format: string): string {
   return format === "heading" ? "text" : format;
+}
+
+function allocateDecisionKey(contentId: string, inputIndex: number, used: Set<string>): string {
+  const base = contentId.trim() || `candidate-${inputIndex}`;
+  let key = base;
+  let suffix = 1;
+  while (used.has(key)) key = `${base}#${suffix++}`;
+  used.add(key);
+  return key;
 }
 
 function idForSlate(ownerId: string, requestedAt: string, seed: number): string {
@@ -343,21 +464,34 @@ export class CurationEngine {
     const prepared: PreparedCandidate[] = [];
     const rejected: CandidateWithReason[] = [];
     const seenIds = new Set<string>();
-    const eligibleByCanonical = new Map<string, { item: ContentEnvelope; index: number }>();
+    const usedDecisionKeys = new Set<string>();
+    const eligibleByCanonical = new Map<
+      string,
+      { item: ContentEnvelope; index: number; decisionKey: string }
+    >();
     const seed = stableSeed(parsedRequest.ownerId, requestedAt, options.seed ?? request.seed);
     const explicitExploration = new Set((options.explorationIds ?? []).map(normalize));
 
     candidates.forEach((candidate, inputIndex) => {
       const parsed = ContentEnvelopeSchema.safeParse(candidate);
+      const raw = (
+        candidate && typeof candidate === "object" ? candidate : {}
+      ) as Partial<ContentEnvelope>;
+      const rawContentId = parsed.success
+        ? parsed.data.id
+        : String(raw.id ?? `candidate-${inputIndex}`);
+      const decisionKey = allocateDecisionKey(rawContentId, inputIndex, usedDecisionKeys);
       if (!parsed.success) {
-        const raw = (
-          candidate && typeof candidate === "object" ? candidate : {}
-        ) as Partial<ContentEnvelope>;
         const rejectedCandidate = {
-          contentId: String(raw.id ?? `candidate-${inputIndex}`),
+          contentId: rawContentId,
           canonicalUri: raw.canonicalUri,
         };
-        rejected.push({ ...rejectedCandidate, reason: "unsafe-content" });
+        rejected.push({
+          ...rejectedCandidate,
+          reason: "unsafe-content",
+          inputIndex,
+          decisionKey,
+        });
         return;
       }
       const item = parsed.data;
@@ -369,38 +503,84 @@ export class CurationEngine {
           contentId: item.id,
           canonicalUri: item.canonicalUri,
           reason: "duplicate-content",
+          inputIndex,
+          decisionKey,
+          policyFacts: [
+            {
+              factor: `content:${item.id}`,
+              source: "curation",
+              reference: item.canonicalUri,
+            },
+          ],
         });
         return;
       }
       seenIds.add(id);
-      const addRejected = (reason: ExclusionReason): void => {
-        rejected.push({ item, contentId: item.id, canonicalUri: item.canonicalUri, reason });
+      const addRejected = (reason: ExclusionReason, policyFacts?: readonly PolicyFact[]): void => {
+        rejected.push({
+          item,
+          contentId: item.id,
+          canonicalUri: item.canonicalUri,
+          reason,
+          inputIndex,
+          decisionKey,
+          policyFacts,
+        });
       };
       if (!item.blocks.length) {
         addRejected("missing-content");
         return;
       }
-      if (item.labels.some((label) => configuredLabels.has(normalize(label.value)))) {
-        addRejected("configured-label");
+      const matchingLabels = item.labels.filter((label) =>
+        configuredLabels.has(normalize(label.value)),
+      );
+      if (matchingLabels.length) {
+        addRejected(
+          "configured-label",
+          matchingLabels.map((label) => ({
+            factor: `label:${label.value}`,
+            source: label.provenance.source,
+            reference: label.provenance.reference ?? item.canonicalUri,
+            observedAt: label.provenance.observedAt,
+          })),
+        );
         return;
       }
       if (mutedSources.has(normalize(item.sourceId))) {
-        addRejected("muted-source");
+        addRejected("muted-source", [
+          {
+            factor: `source:${item.sourceId}`,
+            source: "feedback-state",
+            reference: item.canonicalUri,
+          },
+        ]);
         return;
       }
-      const suppression = notNow.get(id) ?? notNow.get(canonical);
-      if (suppression && isSuppressedUntil(suppression, nowMs)) {
-        addRejected("not-now");
+      const suppressionFactsForItem = suppressionFacts(
+        notNow,
+        [...new Set([id, canonical])],
+        nowMs,
+        "not-now",
+        item.canonicalUri,
+      );
+      if (suppressionFactsForItem.length) {
+        addRejected("not-now", suppressionFactsForItem);
         return;
       }
-      const shownAt = shown.get(id) ?? shown.get(canonical);
-      if (shownAt && isBeforeBoundary(shownAt, nowMs, THIRTY_DAYS_MS)) {
-        addRejected("already-shown");
+      const shownFactsForItem = suppressionFacts(
+        shown,
+        [...new Set([id, canonical])],
+        nowMs,
+        "shown",
+        item.canonicalUri,
+      );
+      if (shownFactsForItem.length) {
+        addRejected("already-shown", shownFactsForItem);
         return;
       }
       const existing = eligibleByCanonical.get(canonical);
       if (existing) {
-        const winner = [existing, { item, index: inputIndex }].sort((left, right) => {
+        const winner = [existing, { item, index: inputIndex, decisionKey }].sort((left, right) => {
           const byId = left.item.id.localeCompare(right.item.id);
           return byId || left.index - right.index;
         })[0];
@@ -410,17 +590,32 @@ export class CurationEngine {
             contentId: existing.item.id,
             canonicalUri: existing.item.canonicalUri,
             reason: "duplicate-canonical",
+            inputIndex: existing.index,
+            decisionKey: existing.decisionKey,
+            policyFacts: [
+              {
+                factor: `canonical:${existing.item.canonicalUri}`,
+                source: "curation",
+                reference: existing.item.canonicalUri,
+              },
+            ],
           });
-          eligibleByCanonical.set(canonical, { item, index: inputIndex });
+          eligibleByCanonical.set(canonical, { item, index: inputIndex, decisionKey });
         } else {
-          addRejected("duplicate-canonical");
+          addRejected("duplicate-canonical", [
+            {
+              factor: `canonical:${item.canonicalUri}`,
+              source: "curation",
+              reference: item.canonicalUri,
+            },
+          ]);
         }
         return;
       }
-      eligibleByCanonical.set(canonical, { item, index: inputIndex });
+      eligibleByCanonical.set(canonical, { item, index: inputIndex, decisionKey });
     });
 
-    for (const { item, index } of eligibleByCanonical.values()) {
+    for (const { item, index, decisionKey } of eligibleByCanonical.values()) {
       const format = formatOf(item);
       const energy = estimateStructuralEnergy(item);
       const scored = scoreCandidate(
@@ -443,8 +638,10 @@ export class CurationEngine {
         energy,
         matchedInterests: scored.matchedInterests,
         score: scored.score,
+        scoreBreakdown: scored.scoreBreakdown,
         exploration,
         inputIndex: index,
+        decisionKey,
       });
     }
     prepared.sort(
@@ -529,12 +726,7 @@ export class CurationEngine {
       contentId: candidate.item.id,
       frame: frameFor(candidate.format),
       position,
-      decisionTrace: selectedTrace(
-        requestedAt,
-        candidate,
-        parsedRequest.energy,
-        candidate.exploration,
-      ),
+      decisionTrace: selectedTrace(requestedAt, candidate, candidate.exploration),
     }));
     const slate = {
       id: slateId,
@@ -553,51 +745,70 @@ export class CurationEngine {
       ]),
     };
 
+    const decisionsWithIndex: Array<{ inputIndex: number; decision: CandidateDecision }> = [];
     const traces = new Map<string, DecisionTrace>();
-    for (const decision of rejected) {
-      const value = exclusionDecision(requestedAt, decision);
-      excluded.push(value);
-      traces.set(value.contentId, value.decisionTrace);
+    for (const candidate of rejected) {
+      const value = exclusionDecision(requestedAt, candidate);
+      decisionsWithIndex.push({ inputIndex: candidate.inputIndex, decision: value });
+      traces.set(value.decisionKey, value.decisionTrace);
     }
     for (const candidate of prepared) {
       const isSelected = selectedIds.has(candidate.item.id);
+      const reason: ExclusionReason =
+        sourceCounts.get(normalize(candidate.item.sourceId)) === 2 ? "source-cap" : "not-selected";
       const decision: CandidateDecision = isSelected
         ? {
+            decisionKey: candidate.decisionKey,
             contentId: candidate.item.id,
             canonicalUri: candidate.item.canonicalUri,
             selected: true,
-            decisionTrace: selectedTrace(
-              requestedAt,
-              candidate,
-              parsedRequest.energy,
-              candidate.exploration,
-            ),
+            decisionTrace: selectedTrace(requestedAt, candidate, candidate.exploration),
           }
         : {
+            decisionKey: candidate.decisionKey,
             contentId: candidate.item.id,
             canonicalUri: candidate.item.canonicalUri,
             selected: false,
-            reason:
-              sourceCounts.get(normalize(candidate.item.sourceId)) === 2
-                ? "source-cap"
-                : "not-selected",
+            reason,
             decisionTrace: trace(
               requestedAt,
               "curation",
               [
                 {
-                  factor: `excluded:${sourceCounts.get(normalize(candidate.item.sourceId)) === 2 ? "source-cap" : "not-selected"}`,
+                  factor: `excluded:${reason}`,
                   weight: 0,
+                  source: `policy:${reason}`,
                 },
+                ...scoringTraceFactors(candidate),
+                ...(reason === "source-cap"
+                  ? [
+                      {
+                        factor: `source:${candidate.item.sourceId}`,
+                        weight: 0,
+                        source: "curation",
+                      },
+                    ]
+                  : []),
               ],
               candidate.item.canonicalUri,
             ),
           };
-      traces.set(candidate.item.id, decision.decisionTrace);
-      if (!decision.selected) excluded.push(decision);
+      decisionsWithIndex.push({ inputIndex: candidate.inputIndex, decision });
+      traces.set(candidate.decisionKey, decision.decisionTrace);
     }
 
-    return { slate, selected: selected.map((candidate) => candidate.item), excluded, traces, seed };
+    decisionsWithIndex.sort((left, right) => left.inputIndex - right.inputIndex);
+    const decisions = decisionsWithIndex.map(({ decision }) => decision);
+    for (const decision of decisions) if (!decision.selected) excluded.push(decision);
+
+    return {
+      slate,
+      selected: selected.map((candidate) => candidate.item),
+      excluded,
+      decisions,
+      traces,
+      seed,
+    };
   }
 }
 

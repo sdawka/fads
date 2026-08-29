@@ -9,6 +9,7 @@ export type {
   D1DatabaseLike,
   D1StatementLike,
   EditionProgress,
+  EditionDecision,
   EditionRepository,
   ResumedEdition,
 } from "./repository";
