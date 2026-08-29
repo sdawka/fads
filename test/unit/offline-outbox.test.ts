@@ -23,7 +23,7 @@ const interaction = (overrides: Record<string, unknown> = {}, key = "feedback-1"
   });
 
 describe("offline mutation outbox", () => {
-  it("queues only explicit feedback and progress mutations", async () => {
+  it("queues only explicit feedback, progress, and completion mutations", async () => {
     expect(isQueueableMutation(interaction())).toBe(true);
     expect(
       isQueueableMutation(
@@ -34,6 +34,25 @@ describe("offline mutation outbox", () => {
         }),
       ),
     ).toBe(true);
+    expect(
+      isQueueableMutation(
+        new Request("https://fads.cc/api/v1/editions/edition-1/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": "complete-1" },
+          body: "{}",
+        }),
+      ),
+    ).toBe(true);
+    await expect(
+      enqueueMutation(
+        createMemoryOutbox(),
+        new Request("https://fads.cc/api/v1/editions/edition-1/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": "complete-1" },
+          body: "{}",
+        }),
+      ),
+    ).resolves.toMatchObject({ kind: "completion" });
     expect(
       isQueueableMutation(
         new Request("https://fads.cc/api/v1/sources", { method: "POST", body: "{}" }),

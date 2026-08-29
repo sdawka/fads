@@ -1,4 +1,4 @@
-export type OfflineMutationKind = "feedback" | "progress";
+export type OfflineMutationKind = "feedback" | "progress" | "completion";
 export type ReplayDisposition = "success" | "transient" | "permanent";
 
 export interface OutboxEntry {
@@ -28,6 +28,7 @@ export interface OutboxStore {
 
 const INTERACTION_PATH = /^\/api\/v1\/interactions$/;
 const PROGRESS_PATH = /^\/api\/v1\/editions\/[^/]+\/progress$/;
+const COMPLETION_PATH = /^\/api\/v1\/editions\/[^/]+\/complete$/;
 const ID_KEY = /^[\x21-\x7e]{1,128}$/;
 const FEEDBACK_KINDS = new Set([
   "more_like_this",
@@ -65,7 +66,8 @@ export function isQueueableMutation(request: Request): boolean {
   const url = new URL(request.url);
   const route =
     (request.method === "POST" && INTERACTION_PATH.test(url.pathname)) ||
-    (request.method === "PATCH" && PROGRESS_PATH.test(url.pathname));
+    (request.method === "PATCH" && PROGRESS_PATH.test(url.pathname)) ||
+    (request.method === "POST" && COMPLETION_PATH.test(url.pathname));
   return (
     url.origin === appOrigin() &&
     url.search === "" &&
@@ -83,7 +85,12 @@ async function validatedRequest(request: Request): Promise<{
   if (!isQueueableMutation(request)) throw new Error("Mutation is not queueable offline.");
   const body = await request.clone().text();
   const data = parseBody(body);
-  const kind: OfflineMutationKind = request.method === "POST" ? "feedback" : "progress";
+  const path = new URL(request.url).pathname;
+  const kind: OfflineMutationKind = INTERACTION_PATH.test(path)
+    ? "feedback"
+    : COMPLETION_PATH.test(path)
+      ? "completion"
+      : "progress";
   if (!data) throw new Error("Offline mutation body must be JSON.");
   if (kind === "feedback") {
     if (
@@ -94,6 +101,8 @@ async function validatedRequest(request: Request): Promise<{
       !FEEDBACK_KINDS.has(data.kind)
     )
       throw new Error("Invalid feedback mutation.");
+  } else if (kind === "completion") {
+    if (Object.keys(data).length !== 0) throw new Error("Invalid completion mutation.");
   } else if (
     typeof data.position !== "number" ||
     !Number.isInteger(data.position) ||

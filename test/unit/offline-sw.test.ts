@@ -132,7 +132,106 @@ function createHarness() {
   return { listeners, caches, entries, sandbox };
 }
 
+const activeEdition = {
+  edition: {
+    id: "edition-1",
+    ownerId: "did:plc:owner",
+    createdAt: "2026-08-28T14:00:00.000Z",
+    curiosity: 50,
+    energy: 50,
+    items: [],
+    decisionTrace: { factors: [], generatedAt: "2026-08-28T14:00:00.000Z" },
+  },
+  content: [],
+  position: 0,
+  completed: false,
+};
+
 describe("service worker flows", () => {
+  it("pre-caches hashed application assets discovered in the install shell", async () => {
+    const harness = createHarness();
+    harness.sandbox.fetch = async () =>
+      new Response(
+        '<!doctype html><script type="module" src="/_astro/app.abc123.js"></script><link rel="stylesheet" href="/_astro/app.def456.css">',
+        { headers: { "content-type": "text/html" } },
+      );
+    let installPromise: Promise<unknown> | undefined;
+    harness.listeners.get("install")!({
+      waitUntil: (promise: Promise<unknown>) => {
+        installPromise = promise;
+      },
+    });
+    await installPromise;
+
+    const shell = await harness.caches.open("fads-shell-v1");
+    expect(await shell.match("/_astro/app.abc123.js")).toBeDefined();
+    expect(await shell.match("/_astro/app.def456.css")).toBeDefined();
+  });
+
+  it("caches a contract-valid active edition returned by the network", async () => {
+    const harness = createHarness();
+    const request = new Request("https://fads.cc/api/v1/editions/active");
+    harness.sandbox.fetch = async () => Response.json(activeEdition);
+    let responsePromise: Promise<Response> | undefined;
+    harness.listeners.get("fetch")!({
+      request,
+      respondWith: (response: Promise<Response>) => {
+        responsePromise = response;
+      },
+    });
+
+    expect(await (await responsePromise!).json()).toEqual(activeEdition);
+    expect(
+      await (await (await harness.caches.open("fads-edition-v1")).match(request))?.json(),
+    ).toEqual(activeEdition);
+  });
+
+  it("keeps the cached edition current after creation and progress", async () => {
+    const harness = createHarness();
+    const activeRequest = new Request("https://fads.cc/api/v1/editions/active");
+    harness.sandbox.fetch = async () => Response.json(activeEdition, { status: 201 });
+    let responsePromise: Promise<Response> | undefined;
+    harness.listeners.get("fetch")!({
+      request: new Request("https://fads.cc/api/v1/editions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "edition-1" },
+        body: JSON.stringify({ curiosity: 50, energy: 50 }),
+      }),
+      respondWith: (response: Promise<Response>) => {
+        responsePromise = response;
+      },
+    });
+    expect(await responsePromise).toMatchObject({ status: 201 });
+    expect(
+      await (await (await harness.caches.open("fads-edition-v1")).match(activeRequest))?.json(),
+    ).toEqual(activeEdition);
+
+    harness.sandbox.fetch = async () =>
+      Response.json({
+        progress: {
+          editionId: "edition-1",
+          ownerId: "did:plc:owner",
+          position: 0,
+          completed: true,
+        },
+      });
+    responsePromise = undefined;
+    harness.listeners.get("fetch")!({
+      request: new Request("https://fads.cc/api/v1/editions/edition-1/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "complete-online" },
+        body: "{}",
+      }),
+      respondWith: (response: Promise<Response>) => {
+        responsePromise = response;
+      },
+    });
+    expect(await responsePromise).toMatchObject({ status: 200 });
+    expect(
+      await (await (await harness.caches.open("fads-edition-v1")).match(activeRequest))?.json(),
+    ).toMatchObject({ position: 0, completed: true });
+  });
+
   it("clones a queueable body before failed network fetch and persists it intact", async () => {
     const harness = createHarness();
     const body = JSON.stringify({
@@ -159,6 +258,29 @@ describe("service worker flows", () => {
     harness.listeners.get("fetch")!(event);
     expect(await responsePromise).toMatchObject({ status: 202 });
     expect(harness.entries[0]).toMatchObject({ body, idempotencyKey: "feedback-1" });
+  });
+
+  it("queues a completion when the network is offline or transiently unavailable", async () => {
+    const harness = createHarness();
+    harness.sandbox.fetch = async () => new Response(null, { status: 503 });
+    let responsePromise: Promise<Response> | undefined;
+    harness.listeners.get("fetch")!({
+      request: new Request("https://fads.cc/api/v1/editions/edition-1/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "complete-1" },
+        body: "{}",
+      }),
+      respondWith: (response: Promise<Response>) => {
+        responsePromise = response;
+      },
+    });
+
+    expect(await responsePromise).toMatchObject({ status: 202 });
+    expect(harness.entries[0]).toMatchObject({
+      kind: "completion",
+      body: "{}",
+      idempotencyKey: "complete-1",
+    });
   });
 
   it("serves cached active edition offline and clears only personal state", async () => {

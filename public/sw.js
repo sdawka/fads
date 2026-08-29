@@ -149,10 +149,14 @@ function validProvenancedValue(value) {
   );
 }
 function validTrace(value) {
+  const keys = value && typeof value === "object" ? Object.keys(value) : [];
   return (
     value &&
     typeof value === "object" &&
-    exactKeys(value, ["factors"]) &&
+    (exactKeys(value, ["factors"]) || exactKeys(value, ["factors", "generatedAt"])) &&
+    (keys.includes("generatedAt")
+      ? typeof value.generatedAt === "string" && Number.isFinite(Date.parse(value.generatedAt))
+      : true) &&
     Array.isArray(value.factors) &&
     value.factors.every(
       (factor) =>
@@ -239,9 +243,14 @@ function queueable(request, url) {
   const interaction = request.method === "POST" && url.pathname === "/api/v1/interactions";
   const progress =
     request.method === "PATCH" && /^\/api\/v1\/editions\/[^/]+\/progress$/.test(url.pathname);
+  const completion =
+    request.method === "POST" && /^\/api\/v1\/editions\/[^/]+\/complete$/.test(url.pathname);
   const key = request.headers.get("Idempotency-Key") || "";
   return (
-    sameOrigin(url) && !url.search && (interaction || progress) && /^[\x21-\x7e]{1,128}$/.test(key)
+    sameOrigin(url) &&
+    !url.search &&
+    (interaction || progress || completion) &&
+    /^[\x21-\x7e]{1,128}$/.test(key)
   );
 }
 
@@ -327,7 +336,9 @@ async function enqueue(request) {
   } catch {
     throw new Error("Offline mutation body must be JSON.");
   }
-  const interaction = request.method === "POST";
+  const pathname = new URL(request.url).pathname;
+  const interaction = pathname === "/api/v1/interactions";
+  const completion = /\/complete$/.test(pathname);
   if (
     interaction &&
     (!data ||
@@ -346,8 +357,11 @@ async function enqueue(request) {
       ].includes(data.kind))
   )
     throw new Error("Invalid feedback mutation.");
+  if (completion && (!data || typeof data !== "object" || Object.keys(data).length !== 0))
+    throw new Error("Invalid completion mutation.");
   if (
     !interaction &&
+    !completion &&
     (!data ||
       typeof data !== "object" ||
       !Number.isInteger(data.position) ||
@@ -366,7 +380,7 @@ async function enqueue(request) {
   }
   const entry = {
     id: crypto.randomUUID(),
-    kind: interaction ? "feedback" : "progress",
+    kind: interaction ? "feedback" : completion ? "completion" : "progress",
     url,
     method: request.method,
     body,
@@ -436,6 +450,15 @@ function replay() {
   return current;
 }
 
+function transient(response) {
+  return (
+    response.status >= 500 ||
+    response.status === 408 ||
+    response.status === 425 ||
+    response.status === 429
+  );
+}
+
 async function activeEdition(request) {
   try {
     const response = await fetch(request);
@@ -452,13 +475,95 @@ async function activeEdition(request) {
   }
 }
 
+async function cacheCreatedEdition(response) {
+  if (!response.ok) return;
+  try {
+    const value = await response.clone().json();
+    if (validEdition(value))
+      await (await caches.open(EDITION_CACHE)).put(ACTIVE_EDITION_PATH, response.clone());
+  } catch {
+    // The API response remains authoritative even if a defensive cache update fails.
+  }
+}
+
+async function updateCachedProgress(editionId, position, completed) {
+  const cache = await caches.open(EDITION_CACHE);
+  const cached = await cache.match(ACTIVE_EDITION_PATH);
+  if (!cached) return;
+  try {
+    const value = await cached.json();
+    if (!validEdition(value) || value.edition.id !== editionId) return;
+    const updated = { ...value, position, completed };
+    if (validEdition(updated))
+      await cache.put(
+        ACTIVE_EDITION_PATH,
+        new Response(JSON.stringify(updated), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+  } catch {
+    // Ignore corrupt or stale cache entries; the next active-edition GET replaces them.
+  }
+}
+
+async function applyProgressResponse(url, response) {
+  if (!response.ok) return;
+  const match = /^\/api\/v1\/editions\/([^/]+)\/(progress|complete)$/.exec(url.pathname);
+  if (!match) return;
+  try {
+    const value = await response.clone().json();
+    const progress = value && typeof value === "object" ? value.progress : undefined;
+    if (
+      progress &&
+      typeof progress === "object" &&
+      progress.editionId === decodeURIComponent(match[1]) &&
+      Number.isInteger(progress.position) &&
+      typeof progress.completed === "boolean"
+    )
+      await updateCachedProgress(progress.editionId, progress.position, progress.completed);
+  } catch {
+    // The network response is still returned; only the optional offline mirror was skipped.
+  }
+}
+
+async function applyQueuedProgress(request) {
+  const url = new URL(request.url);
+  const match = /^\/api\/v1\/editions\/([^/]+)\/(progress|complete)$/.exec(url.pathname);
+  if (!match) return;
+  const cached = await (await caches.open(EDITION_CACHE)).match(ACTIVE_EDITION_PATH);
+  if (!cached) return;
+  try {
+    const value = await cached.json();
+    if (!validEdition(value) || value.edition.id !== decodeURIComponent(match[1])) return;
+    if (match[2] === "complete") {
+      await updateCachedProgress(value.edition.id, value.position, true);
+      return;
+    }
+    const body = await request.clone().json();
+    if (Number.isInteger(body.position))
+      await updateCachedProgress(value.edition.id, body.position, false);
+  } catch {
+    // The outbox remains the durable source of truth for the queued mutation.
+  }
+}
+
+async function precacheShell() {
+  const cache = await caches.open(SHELL_CACHE);
+  await cache.addAll(STATIC_ASSETS);
+  try {
+    const response = await fetch("/", { credentials: "same-origin", cache: "no-store" });
+    if (!response.ok) return;
+    const html = await response.text();
+    const assets = new Set();
+    for (const match of html.matchAll(/["'](\/_astro\/[^"'?#]+)["']/g)) assets.add(match[1]);
+    if (assets.size) await cache.addAll([...assets]);
+  } catch {
+    // Fixed shell assets still provide the explicit offline page.
+  }
+}
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(SHELL_CACHE)
-      .then((cache) => cache.addAll(STATIC_ASSETS))
-      .then(() => self.skipWaiting()),
-  );
+  event.waitUntil(precacheShell().then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
@@ -519,24 +624,52 @@ self.addEventListener("fetch", (event) => {
     );
     return;
   }
+  if (request.method === "POST" && url.pathname === "/api/v1/editions" && !url.search) {
+    event.respondWith(
+      fetch(request).then(async (response) => {
+        await cacheCreatedEdition(response);
+        return response;
+      }),
+    );
+    return;
+  }
   if (queueable(request, url)) {
     const replayRequest = request.clone();
     event.respondWith(
-      fetch(request).catch(async () => {
-        try {
-          await enqueue(replayRequest);
-          await requestReplay();
-          return new Response(JSON.stringify({ queued: true }), {
-            status: 202,
-            headers: { "content-type": "application/json", "x-offline-queued": "true" },
-          });
-        } catch {
-          return new Response(JSON.stringify({ queued: false }), {
-            status: 400,
-            headers: { "content-type": "application/json" },
-          });
-        }
-      }),
+      fetch(request)
+        .then(async (response) => {
+          if (!transient(response)) {
+            await applyProgressResponse(url, response);
+            return response;
+          }
+          try {
+            await enqueue(replayRequest);
+            await applyQueuedProgress(replayRequest);
+            await requestReplay();
+            return new Response(JSON.stringify({ queued: true }), {
+              status: 202,
+              headers: { "content-type": "application/json", "x-offline-queued": "true" },
+            });
+          } catch {
+            return response;
+          }
+        })
+        .catch(async () => {
+          try {
+            await enqueue(replayRequest);
+            await applyQueuedProgress(replayRequest);
+            await requestReplay();
+            return new Response(JSON.stringify({ queued: true }), {
+              status: 202,
+              headers: { "content-type": "application/json", "x-offline-queued": "true" },
+            });
+          } catch {
+            return new Response(JSON.stringify({ queued: false }), {
+              status: 400,
+              headers: { "content-type": "application/json" },
+            });
+          }
+        }),
     );
   }
 });
