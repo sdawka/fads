@@ -1,4 +1,5 @@
 import type { DecisionTrace } from "../contracts";
+import { validatePublicHttpUrl } from "../modules/content";
 
 export type ReaderDirection = "previous" | "next";
 
@@ -36,10 +37,8 @@ export function moveReader(
 
 export function isSafeExternalUrl(value: string): boolean {
   try {
-    const url = new URL(value);
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password
-    );
+    validatePublicHttpUrl(value);
+    return true;
   } catch {
     return false;
   }

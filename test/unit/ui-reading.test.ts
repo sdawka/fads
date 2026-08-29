@@ -48,6 +48,9 @@ describe("safe external links", () => {
   it("permits only credential-free HTTP(S) destinations", () => {
     expect(isSafeExternalUrl("https://example.com/essay")).toBe(true);
     expect(isSafeExternalUrl("https://person:secret@example.com/")).toBe(false);
+    expect(isSafeExternalUrl("http://127.0.0.1/admin")).toBe(false);
+    expect(isSafeExternalUrl("http://router.local/status")).toBe(false);
+    expect(isSafeExternalUrl("http://127.0.0.1.nip.io/admin")).toBe(false);
     expect(isSafeExternalUrl("javascript:alert(1)")).toBe(false);
     expect(isSafeExternalUrl("data:text/html,hello")).toBe(false);
   });
