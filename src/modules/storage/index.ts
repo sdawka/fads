@@ -14,6 +14,7 @@ import {
   type ManualInterest,
   type OwnerPreferences,
 } from "../../contracts/api";
+import { formatOf } from "../curation";
 import type { RssSyncRepository } from "../sources/rss";
 import { z } from "zod";
 
@@ -727,7 +728,7 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
       contentId: item.id,
       sourceId: item.sourceId,
       canonicalUri: item.canonicalUri,
-      format: item.blocks[0]?.kind ?? "unknown",
+      format: formatOf(item),
       tags: item.tags.map((tag) => tag.value),
       labels: item.labels.map((label) => label.value),
     };
@@ -814,8 +815,17 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
             : 0;
     const factors = [
       ...new Set([
-        ...(event.contentId ? [`content:${event.contentId}`] : []),
-        ...(event.sourceId ? [`source:${event.sourceId}`] : []),
+        ...(event.contentId ? [`content:${event.contentId.trim().toLowerCase()}`] : []),
+        ...(event.sourceId ? [`source:${event.sourceId.trim().toLowerCase()}`] : []),
+        ...(context
+          ? [
+              `format:${context.format.trim().toLowerCase()}`,
+              ...context.tags
+                .map((tag) => tag.trim().toLowerCase())
+                .filter(Boolean)
+                .map((tag) => `tag:${tag}`),
+            ]
+          : []),
       ]),
     ];
     for (const factor of delta ? factors : []) {
@@ -823,7 +833,7 @@ export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageH
       statements.push(
         this.db
           .prepare(
-            "INSERT INTO learned_adjustments (id, owner_id, factor, adjustment, provenance_json, updated_at) SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM interactions WHERE id = ?) ON CONFLICT(id) DO UPDATE SET adjustment = learned_adjustments.adjustment + excluded.adjustment, provenance_json = excluded.provenance_json, updated_at = excluded.updated_at",
+            "INSERT INTO learned_adjustments (id, owner_id, factor, adjustment, provenance_json, updated_at) SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM interactions WHERE id = ?) ON CONFLICT(id) DO UPDATE SET adjustment = MAX(-5, MIN(5, learned_adjustments.adjustment + excluded.adjustment)), provenance_json = excluded.provenance_json, updated_at = excluded.updated_at",
           )
           .bind(
             adjustmentId,

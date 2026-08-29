@@ -59,7 +59,7 @@ describe("deterministic curation", () => {
     const outputs = new Set(
       ["request-a", "request-b", "request-c"].map((seed) =>
         new CurationEngine()
-          .generate({ ...base, seed }, items)
+          .generate({ ...base, seed }, items, { manualInterests: ["tag"] })
           .slate.items.map((recommendation) => recommendation.contentId)
           .join(","),
       ),
@@ -245,11 +245,53 @@ describe("deterministic curation", () => {
     expect(result.excluded[0]?.decisionTrace.factors[0]?.factor).toBe("excluded:unsafe-content");
   });
 
-  it("maps curiosity monotonically to one through five exploration slots", () => {
+  it("maps curiosity monotonically from zero through five exploration slots", () => {
     const slots = [0, 1, 24, 25, 50, 75, 100].map(mapCuriosityToExplorationSlots);
 
-    expect(slots).toEqual([1, 1, 1, 2, 3, 4, 5]);
+    expect(slots).toEqual([0, 1, 2, 2, 3, 4, 5]);
     expect(slots).toEqual([...slots].sort((a, b) => a - b));
+  });
+
+  it("selects no surprise when curiosity is zero", () => {
+    const result = new CurationEngine().generate(
+      { ownerId: "owner", requestedAt, curiosity: 0, energy: 18, limit: 2 },
+      [content("familiar", "source-a", "known"), content("surprise", "source-b", "adjacent")],
+      { seed: "no-surprise", manualInterests: ["known"] },
+    );
+
+    expect(result.slate.items.map((item) => item.contentId)).toEqual(["familiar"]);
+    expect(
+      result.slate.items.flatMap((item) =>
+        item.decisionTrace.factors.map((factor) => factor.factor),
+      ),
+    ).not.toContain("exploration");
+  });
+
+  it("requires useful surprises and never spills past the curiosity quota", () => {
+    const staleSurprise = content("stale-surprise", "surprise-stale", "adjacent", {
+      kind: "video",
+      src: "https://example.com/stale.mp4",
+    });
+    staleSurprise.publishedAt = "2020-01-01T00:00:00.000Z";
+    const result = new CurationEngine().generate(
+      { ownerId: "owner", requestedAt, curiosity: 1, energy: 18, limit: 12 },
+      [
+        content("familiar-a", "familiar-a", "known"),
+        content("familiar-b", "familiar-b", "known"),
+        content("useful-surprise-a", "surprise-a", "adjacent"),
+        content("useful-surprise-b", "surprise-b", "adjacent"),
+        content("useful-surprise-c", "surprise-c", "adjacent"),
+        staleSurprise,
+      ],
+      { seed: "bounded-surprise", manualInterests: ["known"] },
+    );
+    const surprises = result.slate.items.filter((item) =>
+      item.decisionTrace.factors.some((factor) => factor.factor === "exploration"),
+    );
+
+    expect(surprises).toHaveLength(1);
+    expect(result.slate.items).toHaveLength(3);
+    expect(result.slate.items.map((item) => item.contentId)).not.toContain("stale-surprise");
   });
 
   it("keeps reserved exploration slots, source caps, format diversity, and truthful short pools", () => {
@@ -305,14 +347,14 @@ describe("deterministic curation", () => {
       new CurationEngine().generate(
         { ownerId: "owner", requestedAt, curiosity: 0, energy: 0, limit: 1 },
         [quiet, electric],
-        { seed: "quiet" },
+        { seed: "seed-13", manualInterests: ["tag"] },
       ).slate.items[0]?.contentId,
     ).toBe("quiet");
     expect(
       new CurationEngine().generate(
         { ownerId: "owner", requestedAt, curiosity: 0, energy: 100, limit: 1 },
         [quiet, electric],
-        { seed: "electric" },
+        { seed: "seed-13", manualInterests: ["tag"] },
       ).slate.items[0]?.contentId,
     ).toBe("electric");
   });
@@ -341,9 +383,7 @@ describe("deterministic curation", () => {
       { seed: "bootstrap", confirmedInterests: ["systems"] },
     );
 
-    expect(
-      proposed.slate.items[0]?.decisionTrace.factors.map((factor) => factor.factor),
-    ).not.toContain("interest-match");
+    expect(proposed.slate.items).toEqual([]);
     expect(
       confirmed.slate.items[0]?.decisionTrace.factors.map((factor) => factor.factor),
     ).toContain("interest-match");

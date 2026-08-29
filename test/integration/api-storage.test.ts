@@ -152,4 +152,67 @@ describe("owner D1 storage", () => {
       recentlyShown: [],
     });
   });
+
+  it("bounds generalized content learning and applies each interaction once", async () => {
+    const repo = new D1OwnerDataRepository(env.DB);
+    await repo.saveSource({
+      id: "rss:learning",
+      ownerId: "did:plc:owner",
+      adapter: "rss",
+      displayName: "Learning",
+      url: "https://example.com/learning.xml",
+      config: {},
+      status: "idle",
+      createdAt: "2026-08-28T12:00:00.000Z",
+      updatedAt: "2026-08-28T12:00:00.000Z",
+    });
+    await repo.rssSyncRepository("did:plc:owner", "rss:learning").commitSync({
+      sourceId: "rss:learning",
+      items: [
+        {
+          id: "item:learning",
+          canonicalUri: "https://example.com/learning",
+          sourceId: "rss:learning",
+          publishedAt: "2026-08-28T11:00:00.000Z",
+          capturedAt: "2026-08-28T12:00:00.000Z",
+          blocks: [{ kind: "paragraph", text: "Learning" }],
+          media: [],
+          tags: [
+            {
+              value: "Systems",
+              provenance: { source: "rss:learning", observedAt: "2026-08-28T12:00:00.000Z" },
+            },
+          ],
+          labels: [],
+        },
+      ],
+    });
+    const record = (id: string, kind: "more_like_this" | "less_like_this") =>
+      repo.recordInteraction({
+        id,
+        ownerId: "did:plc:owner",
+        contentId: "item:learning",
+        sourceId: "rss:learning",
+        kind,
+        occurredAt: "2026-08-28T12:00:00.000Z",
+        provenance: { source: "owner-feedback", observedAt: "2026-08-28T12:00:00.000Z" },
+      });
+
+    for (let index = 0; index < 12; index += 1) await record(`more:${index}`, "more_like_this");
+    await record("more:0", "more_like_this");
+    expect((await repo.getCurationState("did:plc:owner")).learnedAdjustments).toMatchObject({
+      "content:item:learning": 5,
+      "format:text": 5,
+      "source:rss:learning": 5,
+      "tag:systems": 5,
+    });
+
+    for (let index = 0; index < 20; index += 1) await record(`less:${index}`, "less_like_this");
+    expect((await repo.getCurationState("did:plc:owner")).learnedAdjustments).toMatchObject({
+      "content:item:learning": -5,
+      "format:text": -5,
+      "source:rss:learning": -5,
+      "tag:systems": -5,
+    });
+  });
 });

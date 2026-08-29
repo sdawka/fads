@@ -1,6 +1,10 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { CurationEngine, type CurationOptions } from "../../src/modules/curation";
+import {
+  CurationEngine,
+  mapCuriosityToExplorationSlots,
+  type CurationOptions,
+} from "../../src/modules/curation";
 import type { ContentEnvelope } from "../../src/contracts";
 
 const requestedAt = "2026-08-28T12:00:00.000Z";
@@ -14,7 +18,7 @@ function item(id: string, sourceId: string, canonicalUri: string): ContentEnvelo
     capturedAt: requestedAt,
     blocks: [{ kind: "paragraph", text: id }],
     media: [],
-    tags: [],
+    tags: [{ value: "known", provenance: { source: "test", observedAt: requestedAt } }],
     labels: [],
   };
 }
@@ -81,6 +85,13 @@ describe("curation invariants", () => {
             new Set(result.slate.items.map((recommendation) => recommendation.contentId)).size,
           ).toBe(result.slate.items.length);
           expect([...sourceCounts.values()].every((count) => count <= 2)).toBe(true);
+          expect(
+            result.slate.items.filter((recommendation) =>
+              recommendation.decisionTrace.factors.some(
+                (factor) => factor.factor === "exploration",
+              ),
+            ).length,
+          ).toBeLessThanOrEqual(mapCuriosityToExplorationSlots(100));
           expect(result.slate.items.map((recommendation) => recommendation.position)).toEqual(
             result.slate.items.map((_, position) => position),
           );
@@ -104,7 +115,7 @@ describe("curation invariants", () => {
           .generate(
             { ownerId: "owner", requestedAt, curiosity: 0, energy: 50, limit: 1 },
             candidates,
-            { seed },
+            { seed, manualInterests: ["known"] },
           )
           .slate.items.map((recommendation) => recommendation.contentId)
           .join(","),
@@ -232,7 +243,7 @@ describe("curation invariants", () => {
     const result = new CurationEngine().generate(
       { ownerId: "owner", requestedAt, curiosity: 100, energy: 50, limit: 12 },
       candidates,
-      { seed: "twelve-six-sources" },
+      { seed: "twelve-six-sources", manualInterests: ["known", "novel"] },
     );
 
     expect(result.slate.items).toHaveLength(12);

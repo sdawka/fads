@@ -195,8 +195,10 @@ export function weightedSample<T>(
 
 export function mapCuriosityToExplorationSlots(curiosity: number): number {
   const bounded = Math.max(0, Math.min(100, Math.trunc(curiosity)));
-  return 1 + Math.floor((bounded * 4) / 100);
+  return Math.ceil((bounded * 5) / 100);
 }
+
+const SURPRISE_USEFULNESS_FLOOR = 30;
 
 export function formatOf(item: ContentEnvelope): string {
   const media = item.media[0]?.kind;
@@ -668,12 +670,14 @@ export class CurationEngine {
       );
     const choose = (
       pool: readonly PreparedCandidate[],
-      forceExploration: boolean,
+      mode: "exploration" | "exploitation",
     ): PreparedCandidate | undefined => {
-      let candidatesForChoice = available(pool).filter(
-        (candidate) => !forceExploration || candidate.exploration,
+      let candidatesForChoice = available(pool).filter((candidate) =>
+        mode === "exploration"
+          ? candidate.exploration && candidate.score >= SURPRISE_USEFULNESS_FLOOR
+          : !candidate.exploration,
       );
-      if (!candidatesForChoice.length && forceExploration) return undefined;
+      if (!candidatesForChoice.length) return undefined;
       const alternativeFormat = candidatesForChoice.some(
         (candidate) => !selectedFormats.has(candidate.format),
       );
@@ -696,20 +700,15 @@ export class CurationEngine {
     };
 
     while (selected.length < maxItems) {
-      const candidate = choose(prepared, explorationRemaining > 0);
+      let candidate: PreparedCandidate | undefined;
+      if (explorationRemaining > 0) {
+        candidate = choose(prepared, "exploration");
+      }
       if (!candidate) {
         explorationRemaining = 0;
-        const fallback = choose(prepared, false);
-        if (!fallback) break;
-        selected.push(fallback);
-        selectedIds.add(fallback.item.id);
-        sourceCounts.set(
-          normalize(fallback.item.sourceId),
-          (sourceCounts.get(normalize(fallback.item.sourceId)) ?? 0) + 1,
-        );
-        selectedFormats.add(fallback.format);
-        continue;
+        candidate = choose(prepared, "exploitation");
       }
+      if (!candidate) break;
       selected.push(candidate);
       selectedIds.add(candidate.item.id);
       sourceCounts.set(
