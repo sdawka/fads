@@ -3,6 +3,17 @@ import AxeBuilder from "@axe-core/playwright";
 
 const observedAt = "2026-08-28T14:00:00.000Z";
 const provenance = { source: "rss:field-notes", observedAt, reference: "https://example.com/post" };
+const fieldNotesSource = {
+  id: "rss:field-notes",
+  ownerId: "did:plc:owner",
+  adapter: "rss",
+  displayName: "Field Notes",
+  url: "https://example.com/feed.xml",
+  config: {},
+  status: "ready",
+  createdAt: observedAt,
+  updatedAt: observedAt,
+};
 
 const activeEdition = {
   edition: {
@@ -44,7 +55,7 @@ const activeEdition = {
     {
       id: "post-1",
       canonicalUri: "https://example.com/post",
-      sourceId: "Field Notes",
+      sourceId: fieldNotesSource.id,
       publishedAt: observedAt,
       capturedAt: observedAt,
       blocks: [
@@ -77,7 +88,7 @@ const activeEdition = {
     {
       id: "post-2",
       canonicalUri: "https://example.com/second",
-      sourceId: "The Margins",
+      sourceId: "rss:the-margins",
       publishedAt: observedAt,
       capturedAt: observedAt,
       blocks: [
@@ -96,6 +107,9 @@ test.beforeEach(async ({ page }) => {
     route.fulfill({ json: { authenticated: true, did: "did:plc:owner" } }),
   );
   await page.route("**/api/v1/editions/active", (route) => route.fulfill({ json: activeEdition }));
+  await page.route("**/api/v1/sources", (route) =>
+    route.fulfill({ json: { sources: [fieldNotesSource] } }),
+  );
   await page.route("**/api/v1/editions/edition-1/progress", (route) =>
     route.fulfill({
       json: {
@@ -165,8 +179,16 @@ test("reads exactly one safe item at a time and ends deliberately", async ({ pag
   await expect(page.getByText("Manual interest · urban ecology")).toBeVisible();
   await expect(page.locator("main script")).toHaveCount(0);
   await expect(page.getByText("<script>window.__unsafe = true</script>")).toBeVisible();
-  await expect(page.getByAltText("Plants growing between paving stones")).toBeVisible();
-  await expect(page.getByLabel("Audio field note")).not.toHaveAttribute("autoplay", "");
+  await expect(
+    page.getByRole("link", { name: "Open image: Plants growing between paving stones" }),
+  ).toHaveAttribute("href", "https://example.com/garden.jpg");
+  await expect(page.getByRole("link", { name: "Open audio: Audio field note" })).toHaveAttribute(
+    "href",
+    "https://example.com/field-note.mp3",
+  );
+  await expect(page.locator("img, audio, video")).toHaveCount(0);
+  await expect(page.getByRole("article").getByText("Field Notes", { exact: true })).toBeVisible();
+  await expect(page.getByText("rss:field-notes", { exact: true })).toHaveCount(0);
 
   const original = page.getByRole("link", { name: "Read the original field note" });
   await expect(original).toHaveAttribute("target", "_blank");
@@ -182,6 +204,8 @@ test("reads exactly one safe item at a time and ends deliberately", async ({ pag
   ]) {
     await expect(page.getByRole("button", { name: label })).toBeVisible();
   }
+  const keep = page.getByRole("button", { name: "Keep" });
+  await expect(keep).toHaveAttribute("aria-pressed", "true");
 
   const accessibility = await new AxeBuilder({ page }).analyze();
   expect(accessibility.violations).toEqual([]);
@@ -224,11 +248,74 @@ test("resumes the validated active edition when the private API is offline", asy
 });
 
 test("shows safe hydrated previews instead of opaque keep identifiers", async ({ page }) => {
+  await page.route("**/api/v1/sources", (route) => route.fulfill({ json: { sources: [] } }));
   await page.goto("/keeps/");
 
   await expect(page.getByRole("heading", { name: "The city is a garden" })).toBeVisible();
-  await expect(page.getByText(/Look between the paving stones/)).toBeVisible();
+  await expect(page.locator(".keep-list > li > div > p")).toContainText(
+    "Look between the paving stones",
+  );
   await expect(page.getByText("post-1", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("example.com", { exact: true })).toBeVisible();
+  const original = page.getByRole("link", { name: "Read the original field note" });
+  await expect(original).not.toBeVisible();
+  await page.getByText("Read saved item", { exact: true }).click();
+  await expect(original).toBeVisible();
+  await expect(page.locator("img, audio, video")).toHaveCount(0);
+});
+
+test("distinguishes a management load error from an empty collection", async ({ page }) => {
+  await page.route("**/api/v1/keeps", (route) =>
+    route.fulfill({ status: 503, json: { error: "unavailable" } }),
+  );
+
+  await page.goto("/keeps/");
+
+  await expect(page.getByRole("alert")).toContainText("Keeps could not be loaded");
+  await expect(page.getByText("Nothing kept yet.")).toHaveCount(0);
+});
+
+test("adds the owner's ATProto home feed and queues its first refresh", async ({ page }) => {
+  const atprotoSource = {
+    ...fieldNotesSource,
+    id: "atproto:home",
+    adapter: "atproto",
+    displayName: "ATProto home feed",
+    url: undefined,
+    status: "queued",
+  };
+  let createBody: unknown;
+  let refreshRequested = false;
+  await page.route("**/api/v1/preferences", (route) =>
+    route.fulfill({ json: { preferences: { blockedLabels: [], mutedSourceIds: [] } } }),
+  );
+  await page.route("**/api/v1/sources", async (route) => {
+    if (route.request().method() === "POST") {
+      createBody = route.request().postDataJSON();
+      await route.fulfill({ status: 201, json: { source: { ...atprotoSource, status: "idle" } } });
+      return;
+    }
+    await route.fulfill({ json: { sources: [] } });
+  });
+  await page.route("**/api/v1/sources/atproto%3Ahome/refresh", async (route) => {
+    refreshRequested = true;
+    await route.fulfill({ status: 202, json: { source: atprotoSource } });
+  });
+
+  await page.goto("/sources/");
+  await expect(page.getByText(/No sources yet/)).toBeVisible();
+  await page.getByRole("button", { name: "Add ATProto home feed" }).click();
+
+  await expect
+    .poll(() => createBody)
+    .toEqual({
+      adapter: "atproto",
+      displayName: "ATProto home feed",
+      config: {},
+    });
+  await expect.poll(() => refreshRequested).toBe(true);
+  await expect(page.getByText("Source refresh queued.")).toBeVisible();
+  await expect(page.getByText("ATProto home feed", { exact: true })).toBeVisible();
 });
 
 test("requires an explicit accessible confirmation before a full reset", async ({ page }) => {
@@ -256,6 +343,145 @@ test("requires an explicit accessible confirmation before a full reset", async (
       full: true,
       confirmation: "DELETE ALL PRIVATE DATA",
     });
+});
+
+test("edits the owner's exact blocked labels instead of fixed categories", async ({ page }) => {
+  const saved: Array<{ blockedLabels: string[]; mutedSourceIds: string[] }> = [];
+  await page.route("**/api/v1/preferences", async (route) => {
+    if (route.request().method() === "PUT") {
+      const preferences = route.request().postDataJSON() as {
+        blockedLabels: string[];
+        mutedSourceIds: string[];
+      };
+      saved.push(preferences);
+      await route.fulfill({ json: { preferences } });
+      return;
+    }
+    await route.fulfill({
+      json: { preferences: { blockedLabels: ["porn", "graphic-media"], mutedSourceIds: [] } },
+    });
+  });
+
+  await page.goto("/settings/");
+  await expect(page.getByText("porn", { exact: true })).toBeVisible();
+  await expect(page.getByText("graphic-media", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Allow graphic-media" }).click();
+  await page.getByLabel("Label to block").fill("political");
+  await page.getByRole("button", { name: "Block label" }).click();
+
+  await expect
+    .poll(() => saved)
+    .toEqual([
+      { blockedLabels: ["porn"], mutedSourceIds: [] },
+      { blockedLabels: ["porn", "political"], mutedSourceIds: [] },
+    ]);
+});
+
+test("withholds allowance writes when authoritative settings fail to load", async ({ page }) => {
+  await page.route("**/api/v1/preferences", (route) =>
+    route.fulfill({ status: 503, json: { error: "unavailable" } }),
+  );
+
+  await page.goto("/settings/");
+
+  await expect(page.getByRole("alert")).toContainText("Settings could not be loaded");
+  await expect(page.getByLabel("Label to block")).toHaveCount(0);
+});
+
+test("clears private offline state when remote logout cannot be confirmed", async ({ page }) => {
+  let releaseLogout: (() => void) | undefined;
+  await page.route("**/api/v1/preferences", (route) =>
+    route.fulfill({ json: { preferences: { blockedLabels: [], mutedSourceIds: [] } } }),
+  );
+  await page.route("**/api/v1/logout", async (route) => {
+    await new Promise<void>((resolve) => {
+      releaseLogout = resolve;
+    });
+    await route.abort("failed");
+  });
+  await page.goto("/settings/");
+  await page.evaluate(async () => {
+    const cache = await caches.open("fads-edition-v1");
+    await cache.put(
+      "/api/v1/editions/active",
+      new Response(JSON.stringify({ private: true }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  });
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  await expect.poll(() => Boolean(releaseLogout)).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(async () =>
+        Boolean(await (await caches.open("fads-edition-v1")).match("/api/v1/editions/active")),
+      ),
+    )
+    .toBe(false);
+  releaseLogout?.();
+  await expect(
+    page.getByRole("heading", { name: "A quieter place to follow your curiosity." }),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText(
+    "Private offline data was cleared, but server sign-out could not be confirmed",
+  );
+});
+
+test("lets the owner retry a failed offline change so later changes can continue", async ({
+  page,
+}) => {
+  let replayed = false;
+  await page.route("**/api/v1/preferences", (route) =>
+    route.fulfill({ json: { preferences: { blockedLabels: [], mutedSourceIds: [] } } }),
+  );
+  await page.route("**/api/v1/interactions", async (route) => {
+    replayed = true;
+    await route.fulfill({ status: 204 });
+  });
+  await page.goto("/settings/");
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await expect(page.getByText(/Offline cache/)).toBeVisible();
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("fads-offline-v1", 2);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("outbox", "readwrite");
+      transaction.objectStore("outbox").put({
+        id: "failed-1",
+        kind: "feedback",
+        url: `${location.origin}/api/v1/interactions`,
+        method: "POST",
+        body: JSON.stringify({
+          editionId: "edition-1",
+          contentId: "content-1",
+          sourceId: "rss:source-1",
+          kind: "more_like_this",
+        }),
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "failed-1" },
+        idempotencyKey: "failed-1",
+        requestHash: "POST\n/api/v1/interactions\nfailed-1",
+        createdAt: 1,
+        sequence: 1,
+        attempts: 1,
+        state: "failed",
+        lastError: "Server rejected mutation (422).",
+      });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  });
+  await page.reload();
+
+  await page.getByRole("button", { name: "Retry failed changes" }).click();
+
+  await expect.poll(() => replayed).toBe(true);
+  await expect(page.getByText(/offline change.*needs attention/)).toHaveCount(0);
 });
 
 test("keeps mobile reading controls reachable without hiding the trace", async ({ page }) => {

@@ -25,17 +25,34 @@
     {:else if block.kind === "code"}
       <pre><code>{block.code}</code></pre>
     {:else if block.kind === "image"}
-      <figure><img src={block.src} alt={block.alt} loading="lazy" /></figure>
+      {@const attributes = safeExternalLinkAttributes(block.src)}
+      {#if attributes}
+        <p class="external media-link">
+          <a href={attributes.href} target={attributes.target} rel={attributes.rel}>
+            Open image{block.alt ? `: ${block.alt}` : ""}<span aria-hidden="true"> ↗</span>
+          </a>
+        </p>
+      {/if}
     {:else if block.kind === "audio"}
-      <figure>
-        <audio controls preload="none" src={block.src}><track kind="captions" /></audio>
-        {#if block.transcript}<figcaption>{block.transcript}</figcaption>{/if}
-      </figure>
+      {@const attributes = safeExternalLinkAttributes(block.src)}
+      {#if attributes}
+        <p class="external media-link">
+          <a href={attributes.href} target={attributes.target} rel={attributes.rel}>
+            Open audio attachment<span aria-hidden="true"> ↗</span>
+          </a>
+        </p>
+      {/if}
+      {#if block.transcript}<p class="transcript">{block.transcript}</p>{/if}
     {:else if block.kind === "video"}
-      <figure>
-        <video controls preload="metadata" src={block.src}><track kind="captions" /></video>
-        {#if block.transcript}<figcaption>{block.transcript}</figcaption>{/if}
-      </figure>
+      {@const attributes = safeExternalLinkAttributes(block.src)}
+      {#if attributes}
+        <p class="external media-link">
+          <a href={attributes.href} target={attributes.target} rel={attributes.rel}>
+            Open video attachment<span aria-hidden="true"> ↗</span>
+          </a>
+        </p>
+      {/if}
+      {#if block.transcript}<p class="transcript">{block.transcript}</p>{/if}
     {:else if block.kind === "link"}
       {@const attributes = safeExternalLinkAttributes(block.href)}
       {#if attributes}
@@ -49,28 +66,16 @@
   {/each}
 
   {#each media as attachment}
-    <figure class="attachment">
-      {#if attachment.kind === "image"}
-        <img src={attachment.url} alt={attachment.alt ?? ""} loading="lazy" />
-      {:else if attachment.kind === "audio"}
-        <audio
-          aria-label={attachment.alt ?? "Audio attachment"}
-          controls
-          preload="none"
-          src={attachment.url}
-        ></audio>
-      {:else}
-        <video
-          aria-label={attachment.alt ?? "Video attachment"}
-          controls
-          preload="metadata"
-          src={attachment.url}
-        ></video>
-      {/if}
-      {#if attachment.alt && attachment.kind !== "image"}
-        <figcaption>{attachment.alt}</figcaption>
-      {/if}
-    </figure>
+    {@const attributes = safeExternalLinkAttributes(attachment.url)}
+    {#if attributes}
+      <p class="external media-link">
+        <a href={attributes.href} target={attributes.target} rel={attributes.rel}>
+          Open {attachment.kind}{attachment.alt ? `: ${attachment.alt}` : " attachment"}<span
+            aria-hidden="true"> ↗</span
+          >
+        </a>
+      </p>
+    {/if}
   {/each}
 </div>
 
@@ -82,12 +87,10 @@
   h3 { font-size: 1.35rem; }
   blockquote { margin: 2rem 0; border-left: 2px solid var(--ember); padding: 0.2rem 0 0.2rem 1.5rem; color: var(--muted); }
   blockquote p { margin-bottom: 0.5rem; }
-  cite, figcaption { font-family: var(--utility); font-size: 0.72rem; font-style: normal; letter-spacing: 0.02em; }
+  cite { font-family: var(--utility); font-size: 0.72rem; font-style: normal; letter-spacing: 0.02em; }
   pre { max-width: 100%; overflow-x: auto; border: 1px solid var(--line); background: var(--paper); padding: 1rem; font-family: var(--utility); font-size: 0.78rem; line-height: 1.55; }
-  figure { max-width: 100%; margin: 2rem 0; }
-  img, video { display: block; max-width: 100%; height: auto; }
-  audio { width: min(100%, 32rem); }
-  .attachment figcaption { margin-top: 0.55rem; color: var(--muted); }
   .external { font-family: var(--utility); font-size: 0.76rem; }
+  .media-link { margin-block: 1rem; }
+  .transcript { border-left: 1px solid var(--line); padding-left: 1rem; color: var(--muted); }
   .external a { color: var(--ember); text-decoration-thickness: 1px; text-underline-offset: 0.28em; }
 </style>

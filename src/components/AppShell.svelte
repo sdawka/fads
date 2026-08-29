@@ -4,10 +4,13 @@
   import type { ContentEnvelope, KeepRecord, OwnerExport } from "../contracts";
   import {
     clearOfflineState,
+    createIndexedDbOutbox,
     getOfflineEdition,
     getOfflineStatus,
     registerOfflineServiceWorker,
+    replayOfflineMutations,
   } from "../modules/offline";
+  import { discardFailedChanges, resetFailedChangesForRetry } from "./offline-resolution";
   import { createBrowserUiClient } from "./api-client";
   import type {
     ActiveEditionView,
@@ -38,13 +41,21 @@
   let preferences = { blockedLabels: [] as string[], mutedSourceIds: [] as string[] };
   let rssUrl = "";
   let managementLoading = false;
+  let surfaceLoadState: "idle" | "loading" | "ready" | "error" = "idle";
+  let surfaceLoadError = "";
+  let atprotoAdding = false;
+  let preferencesSaving = false;
+  let blockedLabelDraft = "";
   let offlineRegistration: ServiceWorkerRegistration | undefined;
   let offlineState: "checking" | "ready" | "unavailable" = "checking";
   let offlinePending = 0;
   let offlineFailed = 0;
+  let offlineResolving = false;
   let ownerDid = "";
   let resetDialog: HTMLDialogElement;
   let resetConfirmButton: HTMLButtonElement;
+  let offlineFailureDialog: HTMLDialogElement;
+  let offlineDiscardButton: HTMLButtonElement;
 
   let offlineRegistrationPromise: Promise<ServiceWorkerRegistration | undefined> | undefined;
   function ensureOfflineRegistration() {
@@ -65,6 +76,7 @@
   $: frame = edition?.edition.items[position];
   $: item = frame ? edition?.content.find((candidate) => candidate.id === frame?.contentId) : undefined;
   $: title = item?.blocks.find((block) => block.kind === "heading")?.text ?? "Untitled";
+  $: atprotoSource = rssSources.find((source) => source.adapter === "atproto");
 
   async function refreshOfflineQueueStatus(): Promise<void> {
     try {
@@ -90,6 +102,15 @@
       if (session === "authenticated" && activeSurface === "edition") {
         edition = await uiClient.activeEdition();
         atEnd = edition?.completed ?? false;
+        const [sourceResult, keepResult] = await Promise.allSettled([
+          uiClient.listSources(),
+          uiClient.listKeeps(),
+        ]);
+        if (sourceResult.status === "fulfilled") rssSources = sourceResult.value;
+        if (keepResult.status === "fulfilled") {
+          keeps = keepResult.value.keeps;
+          keptContent = keepResult.value.content;
+        }
       } else if (session === "authenticated") {
         await loadSurface(uiClient);
       }
@@ -118,6 +139,8 @@
 
   async function loadSurface(uiClient: FadsUiClient) {
     managementLoading = true;
+    surfaceLoadState = "loading";
+    surfaceLoadError = "";
     try {
       if (activeSurface === "keeps") {
         const library = await uiClient.listKeeps();
@@ -137,8 +160,13 @@
         ]);
       }
       if (activeSurface === "settings") preferences = await uiClient.getPreferences();
+      surfaceLoadState = "ready";
     } catch (error) {
-      statusMessage = error instanceof Error ? error.message : "This surface could not be loaded.";
+      const surfaceName = activeSurface[0].toUpperCase() + activeSurface.slice(1);
+      const detail = error instanceof Error ? error.message : "The private API could not be reached.";
+      surfaceLoadState = "error";
+      surfaceLoadError = `${surfaceName} could not be loaded. ${detail}`;
+      statusMessage = surfaceLoadError;
     } finally {
       managementLoading = false;
     }
@@ -232,6 +260,33 @@
     }
   }
 
+  async function addAtprotoHomeFeed() {
+    if (!client || atprotoAdding || atprotoSource) return;
+    atprotoAdding = true;
+    try {
+      const added = await client.addSource({
+        adapter: "atproto",
+        displayName: "ATProto home feed",
+        config: {},
+      });
+      rssSources = [added, ...rssSources];
+      try {
+        const queued = await client.refreshSource(added.id);
+        rssSources = rssSources.map((source) => (source.id === queued.id ? queued : source));
+        statusMessage = "Source refresh queued.";
+      } catch (error) {
+        statusMessage =
+          error instanceof Error
+            ? `Home feed added, but refresh was not queued: ${error.message}`
+            : "Home feed added, but refresh was not queued.";
+      }
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "The ATProto home feed could not be added.";
+    } finally {
+      atprotoAdding = false;
+    }
+  }
+
   async function addInterest(event: SubmitEvent) {
     if (!client) return;
     const form = event.currentTarget as HTMLFormElement;
@@ -313,6 +368,33 @@
     }
   }
 
+  async function saveBlockedLabels(blockedLabels: string[]) {
+    if (!client || surfaceLoadState !== "ready" || preferencesSaving) return;
+    const previous = preferences;
+    preferencesSaving = true;
+    try {
+      preferences = await client.savePreferences({ ...preferences, blockedLabels });
+      statusMessage = "Allowances saved.";
+    } catch (error) {
+      preferences = previous;
+      statusMessage = error instanceof Error ? error.message : "Allowances could not be saved.";
+    } finally {
+      preferencesSaving = false;
+    }
+  }
+
+  async function addBlockedLabel(event: SubmitEvent) {
+    event.preventDefault();
+    const value = blockedLabelDraft.trim();
+    if (!value || preferences.blockedLabels.includes(value)) return;
+    await saveBlockedLabels([...preferences.blockedLabels, value]);
+    if (preferences.blockedLabels.includes(value)) blockedLabelDraft = "";
+  }
+
+  async function removeBlockedLabel(value: string) {
+    await saveBlockedLabels(preferences.blockedLabels.filter((label) => label !== value));
+  }
+
   async function removeInterest(id: string) {
     if (!client) return;
     const previous = manualInterests;
@@ -369,6 +451,44 @@
     }
   }
 
+  async function retryFailedOfflineChanges() {
+    if (offlineResolving) return;
+    offlineResolving = true;
+    try {
+      const store = createIndexedDbOutbox();
+      const reset = await resetFailedChangesForRetry(store);
+      const result = await replayOfflineMutations(store);
+      await refreshOfflineQueueStatus();
+      statusMessage = result.failed
+        ? "The server still rejected an offline change. You can retry or discard it."
+        : `${reset} failed offline change${reset === 1 ? "" : "s"} retried.`;
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "Offline changes could not be retried.";
+    } finally {
+      offlineResolving = false;
+    }
+  }
+
+  function askToDiscardFailedChanges() {
+    offlineFailureDialog.showModal();
+    window.requestAnimationFrame(() => offlineDiscardButton.focus());
+  }
+
+  async function discardFailedOfflineChanges() {
+    if (offlineResolving) return;
+    offlineResolving = true;
+    try {
+      const discarded = await discardFailedChanges(createIndexedDbOutbox());
+      await refreshOfflineQueueStatus();
+      offlineFailureDialog.close();
+      statusMessage = `${discarded} failed offline change${discarded === 1 ? "" : "s"} discarded.`;
+    } catch (error) {
+      statusMessage = error instanceof Error ? error.message : "Failed offline changes could not be discarded.";
+    } finally {
+      offlineResolving = false;
+    }
+  }
+
   function askForFullReset() {
     resetDialog.showModal();
     window.requestAnimationFrame(() => resetConfirmButton.focus());
@@ -393,13 +513,27 @@
 
   async function signOut() {
     if (!client) return;
-    try {
-      await client.logout();
-      await clearOfflineState(offlineRegistration);
+    const [remoteResult, localResult] = await Promise.allSettled([
+      client.logout(),
+      clearOfflineState(offlineRegistration),
+    ]);
+    const remoteError = remoteResult.status === "rejected" ? remoteResult.reason : undefined;
+    if (localResult.status === "fulfilled") {
       session = "signed-out";
-      statusMessage = "Signed out.";
-    } catch (error) {
-      statusMessage = error instanceof Error ? error.message : "Could not sign out.";
+      ownerDid = "";
+      edition = undefined;
+      keeps = [];
+      keptContent = [];
+      statusMessage = "";
+      loadError = remoteError
+        ? "Private offline data was cleared, but server sign-out could not be confirmed. Reconnect and sign out again to end the server session."
+        : "";
+    } else {
+      statusMessage = remoteError
+        ? "Server sign-out and local private-data clearing both failed. Try again before leaving this device."
+        : localResult.reason instanceof Error
+          ? `Server sign-out succeeded, but local private data could not be cleared: ${localResult.reason.message}`
+          : "Server sign-out succeeded, but local private data could not be cleared.";
     }
   }
 
@@ -425,6 +559,23 @@
       content.media.some((attachment) => attachment.kind === "audio")
     ) return "AUDIO";
     return "READ";
+  }
+
+  function sourceDisplayName(
+    sourceId: string,
+    sources: typeof rssSources,
+    canonicalUri?: string,
+  ): string {
+    const source = sources.find((candidate) => candidate.id === sourceId);
+    if (source) return source.displayName;
+    if (canonicalUri?.startsWith("at://")) return "ATProto";
+    try {
+      const url = new URL(canonicalUri ?? "");
+      if (url.protocol === "http:" || url.protocol === "https:") return url.hostname;
+    } catch {
+      // Fall through to a truthful generic label.
+    }
+    return "Unknown source";
   }
 </script>
 
@@ -511,7 +662,7 @@
           <section class="reading-frame" aria-labelledby="article-title">
             <article class="reading-canvas">
               <header class="article-meta">
-                <div><span>{formatOf(item)}</span><span>{item.sourceId}</span></div>
+                <div><span>{formatOf(item)}</span><span>{sourceDisplayName(item.sourceId, rssSources, item.canonicalUri)}</span></div>
                 <p><span>{position + 1} of {total}</span><progress value={position + 1} max={total}>Item {position + 1} of {total}</progress></p>
               </header>
               <div class="article-body">
@@ -527,7 +678,7 @@
                   <button type="button" on:click={() => react("good_surprise")}>Good surprise</button>
                   <button type="button" on:click={() => react("not_now")}>Not now</button>
                   <button type="button" on:click={() => react("mute_source")}>Mute source</button>
-                  <button class:chosen={keeps.some((keep) => keep.contentId === item.id)} type="button" on:click={() => react("keep")}>Keep</button>
+                  <button class:chosen={keeps.some((keep) => keep.contentId === item.id)} aria-pressed={keeps.some((keep) => keep.contentId === item.id)} type="button" on:click={() => react("keep")}>Keep</button>
                 </div>
               </div>
             </article>
@@ -548,7 +699,7 @@
                 <dl>
                   <div><dt>Curiosity</dt><dd>{edition.edition.curiosity}</dd></div>
                   <div><dt>Energy</dt><dd>{edition.edition.energy}</dd></div>
-                  <div><dt>Source</dt><dd>{item.sourceId}</dd></div>
+                  <div><dt>Source</dt><dd>{sourceDisplayName(item.sourceId, rssSources, item.canonicalUri)}</dd></div>
                 </dl>
               </div>
             </aside>
@@ -569,37 +720,42 @@
           <header><p class="eyebrow">YOUR MARGINS</p><h1 id="keeps-title">Keeps</h1><p>Things worth returning to, newest first.</p></header>
           {#if managementLoading}
             <p class="empty-note" role="status">Loading your keeps…</p>
+          {:else if surfaceLoadState === "error"}
+            <p class="empty-note notice" role="alert">{surfaceLoadError}</p>
           {:else if keeps.length === 0}
             <div class="empty-note"><p>Nothing kept yet.</p><a href="/">Open an edition and keep what stays with you.</a></div>
           {:else}
-            <ol class="keep-list">{#each keeps as keep}{@const content = keptContent.find((item) => item.id === keep.contentId)}<li><span>{formatDate(keep.keptAt)}</span><div><h2>{content ? contentTitle(content) : "Unavailable item"}</h2>{#if content}<p>{contentPreview(content)}</p><small>{content.sourceId}</small>{/if}</div><button type="button" on:click={() => removeKeep(keep.contentId)}>Remove</button></li>{/each}</ol>
+            <ol class="keep-list">{#each keeps as keep}{@const content = keptContent.find((item) => item.id === keep.contentId)}<li><span>{formatDate(keep.keptAt)}</span><div><h2>{content ? contentTitle(content) : "Unavailable item"}</h2>{#if content}<p>{contentPreview(content)}</p><small>{sourceDisplayName(content.sourceId, rssSources, content.canonicalUri)}</small><details class="keep-content"><summary>Read saved item</summary><SafeBlocks blocks={content.blocks} media={content.media} skipFirstHeading={true} /></details>{/if}</div><button type="button" on:click={() => removeKeep(keep.contentId)}>Remove</button></li>{/each}</ol>
           {/if}
         </section>
       {:else if activeSurface === "sources"}
         <section class="management-surface" aria-labelledby="sources-title">
           <header><p class="eyebrow">WHAT MAY ENTER</p><h1 id="sources-title">Sources</h1><p>Your source list is private. A source must be allowed before it can appear.</p></header>
-          {#if managementLoading}<p role="status">Loading your sources…</p>{/if}
+          {#if surfaceLoadState === "loading"}<p role="status">Loading your sources…</p>{:else if surfaceLoadState === "error"}<p class="empty-note notice" role="alert">{surfaceLoadError}</p>{:else}
           <div class="management-grid">
-            <section aria-labelledby="atproto-title"><p class="section-number">01 · SOCIAL</p><h2 id="atproto-title">ATProto</h2><p class="connection"><span aria-hidden="true">●</span> Signed in{ownerDid ? ` as ${ownerDid}` : ""}</p><p class="muted-note">Source sync uses the configured owner’s ATProto OAuth session.</p></section>
+            <section aria-labelledby="atproto-title"><p class="section-number">01 · SOCIAL</p><h2 id="atproto-title">ATProto</h2><p class="connection"><span aria-hidden="true">●</span> Signed in{ownerDid ? ` as ${ownerDid}` : ""}</p><p class="muted-note">Source sync uses the configured owner’s ATProto OAuth session.</p>{#if atprotoSource}<button class="button quiet" type="button" on:click={() => refreshSource(atprotoSource.id)}>Refresh home feed</button>{:else}<button class="button primary" type="button" disabled={atprotoAdding} on:click={addAtprotoHomeFeed}>Add ATProto home feed</button>{/if}</section>
             <section aria-labelledby="rss-title"><p class="section-number">02 · PUBLICATIONS</p><h2 id="rss-title">RSS</h2><form on:submit|preventDefault={addSource}><label for="rss-url">Feed URL</label><div class="inline-field"><input id="rss-url" type="url" required placeholder="https://example.com/feed.xml" bind:value={rssUrl} /><button class="button primary" type="submit">Add source</button></div></form><div class="row-actions"><label class="button quiet" for="opml-file">Import OPML</label><input class="visually-hidden" id="opml-file" type="file" accept=".opml,.xml,text/xml" on:change={importOpmlFile} /><button class="text-button" type="button" on:click={async () => { if (!client) return; try { const opml = await client.exportOpml(); const blob = new Blob([opml], { type: "text/x-opml" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "fads-sources.opml"; anchor.click(); URL.revokeObjectURL(url); statusMessage = "OPML exported."; } catch (error) { statusMessage = error instanceof Error ? error.message : "OPML export failed."; } }}>Export OPML</button></div></section>
           </div>
-          {#if rssSources.length}<ul class="source-list">{#each rssSources as source}<li><div><strong>{source.displayName}</strong><small>{source.url ?? "ATProto"}</small></div><span>{source.status === "error" ? source.lastError : source.status}</span><button type="button" on:click={() => refreshSource(source.id)}>Refresh</button><button type="button" on:click={() => toggleSourceMute(source.id)}>{preferences.mutedSourceIds.includes(source.id) ? "Unmute" : "Mute"}</button><button type="button" on:click={() => removeSource(source.id)}>Remove</button></li>{/each}</ul>{:else if !managementLoading}<p class="empty-note">No RSS sources yet. Add one above or import an OPML file.</p>{/if}
+          {#if rssSources.length}<ul class="source-list">{#each rssSources as source}<li><div><strong>{source.displayName}</strong><small>{source.url ?? "ATProto"}</small></div><span>{source.status === "error" ? source.lastError : source.status}</span><button type="button" on:click={() => refreshSource(source.id)}>Refresh</button><button type="button" on:click={() => toggleSourceMute(source.id)}>{preferences.mutedSourceIds.includes(source.id) ? "Unmute" : "Mute"}</button><button type="button" on:click={() => removeSource(source.id)}>Remove</button></li>{/each}</ul>{:else if !managementLoading}<p class="empty-note">No sources yet. Add an ATProto home feed, RSS URL, or OPML file.</p>{/if}
+          {/if}
         </section>
       {:else if activeSurface === "garden"}
         <section class="management-surface" aria-labelledby="garden-title">
           <header><p class="eyebrow">TASTE, IN PLAIN SIGHT</p><h1 id="garden-title">Garden</h1><p>Interests you name outrank guesses. Suggestions wait for your say.</p></header>
+          {#if surfaceLoadState === "loading"}<p role="status">Loading your garden…</p>{:else if surfaceLoadState === "error"}<p class="empty-note notice" role="alert">{surfaceLoadError}</p>{:else}
           <div class="management-grid garden-grid">
-            <section aria-labelledby="manual-title"><p class="section-number">ROOTED</p><h2 id="manual-title">Your interests</h2>{#if managementLoading}<p role="status">Loading your garden…</p>{/if}<ul class="tag-list">{#each manualInterests as interest}<li><span>{interest.value}</span><button type="button" aria-label={`Remove ${interest.value}`} on:click={() => removeInterest(interest.id)}>×</button></li>{/each}</ul><form class="inline-field" on:submit|preventDefault={addInterest}><label class="visually-hidden" for="interest">New interest</label><input id="interest" name="interest" required placeholder="Add an interest" /><button class="button primary" type="submit">Add</button></form></section>
+            <section aria-labelledby="manual-title"><p class="section-number">ROOTED</p><h2 id="manual-title">Your interests</h2><ul class="tag-list">{#each manualInterests as interest}<li><span>{interest.value}</span><button type="button" aria-label={`Remove ${interest.value}`} on:click={() => removeInterest(interest.id)}>×</button></li>{/each}</ul><form class="inline-field" on:submit|preventDefault={addInterest}><label class="visually-hidden" for="interest">New interest</label><input id="interest" name="interest" required placeholder="Add an interest" /><button class="button primary" type="submit">Add</button></form></section>
             <section aria-labelledby="suggestions-title"><p class="section-number">WAITING FOR YOU</p><h2 id="suggestions-title">Suggestions</h2>{#if suggestions.length}<ul class="suggestion-list">{#each suggestions as suggestion}<li><span><strong>{suggestion.value}</strong><small>Seen across {suggestion.evidenceCount} allowed sources</small></span><button type="button" aria-label={`Confirm ${suggestion.value}`} on:click={() => decideSuggestion(suggestion, "confirm")}>Confirm</button><button type="button" aria-label={`Reject ${suggestion.value}`} on:click={() => decideSuggestion(suggestion, "reject")}>Dismiss</button></li>{/each}</ul>{:else}<p>Every suggestion has been decided.</p>{/if}</section>
           </div>
           <section class="learned" aria-labelledby="learned-title"><p class="section-number">DIRECTIONAL, NOT DEFINING</p><h2 id="learned-title">What your actions are changing</h2><p>Your edition reactions adjust future ranking. The exact stored adjustments are included in your private export; a live inspection view is not available yet.</p></section>
+          {/if}
         </section>
       {:else}
         <section class="management-surface settings" aria-labelledby="settings-title">
           <header><p class="eyebrow">BOUNDARIES &amp; PORTABILITY</p><h1 id="settings-title">Settings</h1><p>The guardrails stay explicit. Your private data stays portable.</p></header>
           <div class="settings-list">
-            <section><div><p class="section-number">ALLOWANCES</p><h2>Content labels</h2><p>Excluded labels are hard gates, never ranking hints.</p></div><fieldset><legend class="visually-hidden">Excluded content labels</legend>{#each ["adult", "graphic", "political"] as label}<label><input type="checkbox" checked={preferences.blockedLabels.includes(label)} on:change={async (event) => { if (!client) return; const checkbox = event.currentTarget as HTMLInputElement; const previous = preferences; preferences = { ...preferences, blockedLabels: checkbox.checked ? [...preferences.blockedLabels, label] : preferences.blockedLabels.filter((item) => item !== label) }; try { preferences = await client.savePreferences(preferences); statusMessage = "Allowances saved."; } catch (error) { preferences = previous; checkbox.checked = previous.blockedLabels.includes(label); statusMessage = error instanceof Error ? error.message : "Allowances could not be saved."; } }} /> {label[0].toUpperCase() + label.slice(1)} content</label>{/each}</fieldset></section>
-            <section><div><p class="section-number">OFFLINE</p><h2>Active edition only</h2><p>The shell and current edition can resume offline. OAuth, exports, and source data never enter the cache.</p></div><div><p class="connection"><span aria-hidden="true">●</span> {offlineState === "ready" ? "Offline cache active" : offlineState === "checking" ? "Checking offline cache" : "Offline cache unavailable"}</p>{#if offlinePending > 0}<p>{offlinePending} change{offlinePending === 1 ? " is" : "s are"} waiting to sync.</p>{/if}{#if offlineFailed > 0}<p class="notice" role="alert">{offlineFailed} offline change{offlineFailed === 1 ? " needs" : "s need"} attention after the server rejected it.</p>{/if}</div></section>
+            <section><div><p class="section-number">ALLOWANCES</p><h2>Content labels</h2><p>Exact source labels are hard gates, never ranking hints.</p></div>{#if surfaceLoadState === "loading"}<p role="status">Loading your allowances…</p>{:else if surfaceLoadState === "error"}<p class="notice" role="alert">{surfaceLoadError}</p>{:else}<div><ul class="tag-list" aria-label="Blocked content labels">{#each preferences.blockedLabels as label}<li><span>{label}</span><button type="button" disabled={preferencesSaving} aria-label={`Allow ${label}`} on:click={() => removeBlockedLabel(label)}>×</button></li>{/each}</ul>{#if preferences.blockedLabels.length === 0}<p>No content labels are blocked.</p>{/if}<form class="inline-field" on:submit={addBlockedLabel}><label class="visually-hidden" for="blocked-label">Label to block</label><input id="blocked-label" maxlength="120" required placeholder="Exact label, e.g. graphic-media" bind:value={blockedLabelDraft} /><button class="button quiet" type="submit" disabled={preferencesSaving}>Block label</button></form></div>{/if}</section>
+            <section><div><p class="section-number">OFFLINE</p><h2>Active edition only</h2><p>The shell and current edition can resume offline. OAuth, exports, and source data never enter the cache.</p></div><div><p class="connection"><span aria-hidden="true">●</span> {offlineState === "ready" ? "Offline cache active" : offlineState === "checking" ? "Checking offline cache" : "Offline cache unavailable"}</p>{#if offlinePending > 0}<p>{offlinePending} change{offlinePending === 1 ? " is" : "s are"} waiting to sync.</p>{/if}{#if offlineFailed > 0}<p class="notice" role="alert">{offlineFailed} offline change{offlineFailed === 1 ? " needs" : "s need"} attention after the server rejected it.</p><div class="row-actions"><button class="button quiet" type="button" disabled={offlineResolving} on:click={retryFailedOfflineChanges}>Retry failed changes</button><button class="text-button danger" type="button" disabled={offlineResolving} on:click={askToDiscardFailedChanges}>Discard failed changes…</button></div>{/if}</div></section>
             <section><div><p class="section-number">PORTABILITY</p><h2>Your private data</h2><p>Download a validated JSON copy whenever you want.</p></div><button class="button quiet" type="button" on:click={downloadExport}>Export my data</button></section>
             <section class="danger-zone"><div><p class="section-number">RESET</p><h2>Start over carefully</h2><p>Reset learned taste while keeping manual interests, or explicitly erase everything.</p></div><div class="row-actions"><button class="button quiet" type="button" on:click={resetLearnedTaste}>Reset learned taste</button><button class="text-button danger" type="button" on:click={askForFullReset}>Full reset…</button></div></section>
             <section><div><p class="section-number">SESSION</p><h2>Leave this device</h2></div><button class="button primary" type="button" on:click={signOut}>Sign out</button></section>
@@ -614,6 +770,15 @@
       <div class="row-actions">
         <button class="button quiet" type="button" on:click={cancelFullReset}>Cancel</button>
         <button bind:this={resetConfirmButton} class="button danger-button" type="button" on:click={fullReset}>Erase everything</button>
+      </div>
+    </dialog>
+    <dialog bind:this={offlineFailureDialog} aria-labelledby="offline-failure-dialog-title">
+      <p class="section-number">OFFLINE CHANGES</p>
+      <h2 id="offline-failure-dialog-title">Discard failed changes?</h2>
+      <p>This removes only changes the server rejected. Later pending changes will remain available to sync.</p>
+      <div class="row-actions">
+        <button class="button quiet" type="button" on:click={() => offlineFailureDialog.close()}>Cancel</button>
+        <button bind:this={offlineDiscardButton} class="button danger-button" type="button" disabled={offlineResolving} on:click={discardFailedOfflineChanges}>Discard failed changes</button>
       </div>
     </dialog>
   </div>

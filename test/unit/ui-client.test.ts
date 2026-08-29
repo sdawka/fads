@@ -94,6 +94,17 @@ describe("browser UI client", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("accepts a queued edition completion while offline", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ queued: true }), {
+        status: 202,
+        headers: { "Content-Type": "application/json", "x-offline-queued": "true" },
+      }),
+    );
+
+    await expect(createBrowserUiClient(fetcher).complete("edition-1")).resolves.toBeUndefined();
+  });
+
   it("rejects session responses with undeclared fields", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ authenticated: false, did: "did:plc:leak" }), {

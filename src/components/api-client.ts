@@ -128,11 +128,9 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
       parse(await readJson(response), EditionProgressResponseSchema, "Invalid progress response.");
     },
     async complete(editionId) {
-      parse(
-        await readJson(await mutate(paths.complete(editionId), {})),
-        EditionProgressResponseSchema,
-        "Invalid progress response.",
-      );
+      const response = await mutate(paths.complete(editionId), {});
+      if (isOfflineQueued(response)) return;
+      parse(await readJson(response), EditionProgressResponseSchema, "Invalid progress response.");
     },
     async interact(input: {
       editionId: string;
