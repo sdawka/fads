@@ -84,9 +84,7 @@ describe("runtime route boundary", () => {
   it("does not permit an unauthenticated logout mutation", async () => {
     const { api, auth, route } = createHarness(false);
 
-    const response = await route(
-      new Request("https://fads.cc/api/v1/logout", { method: "POST" }),
-    );
+    const response = await route(new Request("https://fads.cc/api/v1/logout", { method: "POST" }));
 
     expect(response?.status).toBe(401);
     expect(api).not.toHaveBeenCalled();

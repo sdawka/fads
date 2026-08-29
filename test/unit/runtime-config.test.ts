@@ -37,7 +37,10 @@ describe("runtime configuration", () => {
     [{ ...validEnv(), APP_ORIGIN: "https://fads.cc/app" }, "HTTPS origin"],
     [{ ...validEnv(), ATPROTO_OAUTH_PRIVATE_JWKS: "not json" }, "OAuth private JWKs"],
     [
-      { ...validEnv(), ATPROTO_OAUTH_PRIVATE_JWKS: JSON.stringify([{ ...privateKey, d: undefined }]) },
+      {
+        ...validEnv(),
+        ATPROTO_OAUTH_PRIVATE_JWKS: JSON.stringify([{ ...privateKey, d: undefined }]),
+      },
       "OAuth private JWKs",
     ],
     [{ ...validEnv(), SAFETY_LABELS_JSON: JSON.stringify([""]) }, "safety labels"],

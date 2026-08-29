@@ -49,12 +49,32 @@ describe("initial D1 migration", () => {
     await env.DB.prepare(
       "INSERT INTO editions (owner_id, id, requested_at, curiosity, energy, trace_json, position, completed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-      .bind("owner-a", "same-edition", "2026-08-28T12:00:00.000Z", 80, 20, "{}", 0, 0, "2026-08-28T12:00:00.000Z")
+      .bind(
+        "owner-a",
+        "same-edition",
+        "2026-08-28T12:00:00.000Z",
+        80,
+        20,
+        "{}",
+        0,
+        0,
+        "2026-08-28T12:00:00.000Z",
+      )
       .run();
     await env.DB.prepare(
       "INSERT INTO editions (owner_id, id, requested_at, curiosity, energy, trace_json, position, completed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-      .bind("owner-b", "same-edition", "2026-08-28T12:00:00.000Z", 10, 90, "{}", 0, 0, "2026-08-28T12:00:00.000Z")
+      .bind(
+        "owner-b",
+        "same-edition",
+        "2026-08-28T12:00:00.000Z",
+        10,
+        90,
+        "{}",
+        0,
+        0,
+        "2026-08-28T12:00:00.000Z",
+      )
       .run();
 
     const owners = await env.DB.prepare(

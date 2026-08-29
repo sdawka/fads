@@ -147,9 +147,7 @@ export function createAtprotoSource(options: AtprotoSourceOptions): SourceAdapte
 function assertXrpcResponse(response: XrpcResponse): void {
   if (response.ok) return;
   const status =
-    typeof response.status === "number" && Number.isFinite(response.status)
-      ? response.status
-      : 502;
+    typeof response.status === "number" && Number.isFinite(response.status) ? response.status : 502;
   throw Object.assign(new Error(`AT Protocol request failed with ${status}`), { status });
 }
 
@@ -224,7 +222,9 @@ function recordTags(
   source: string,
   observedAt: string,
 ): ContentEnvelope["tags"] {
-  const values = array(record?.tags).flatMap((value) => (string(value)?.trim() ? [string(value)!] : []));
+  const values = array(record?.tags).flatMap((value) =>
+    string(value)?.trim() ? [string(value)!] : [],
+  );
   for (const facet of array(record?.facets)) {
     for (const feature of array(object(facet)?.features)) {
       const candidate = object(feature);

@@ -86,9 +86,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [
-        { kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" },
-      ],
+      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
       session: new MemoryOwnerSession(),
       oauthFactory: () => ({
         metadata: {},
@@ -434,9 +432,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [
-        { kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" },
-      ],
+      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
       session: new MemoryOwnerSession(),
       oauthFactory: () => ({
         metadata: {},

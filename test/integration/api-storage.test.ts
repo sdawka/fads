@@ -66,7 +66,9 @@ describe("owner D1 storage", () => {
       now: "2026-08-28T12:01:00.000Z",
     });
 
-    expect(replay && !replay.conflict ? await replay.response.json() : undefined).toEqual({ ok: true });
+    expect(replay && !replay.conflict ? await replay.response.json() : undefined).toEqual({
+      ok: true,
+    });
     expect(conflict).toEqual({ conflict: true });
     expect(otherOwner).toBeUndefined();
   });
@@ -84,7 +86,11 @@ describe("owner D1 storage", () => {
       createdAt: "2026-08-28T12:00:00.000Z",
       updatedAt: "2026-08-28T12:00:00.000Z",
     });
-    const rss = repo.rssSyncRepository("did:plc:owner", "rss:one", () => "2026-08-28T12:01:00.000Z");
+    const rss = repo.rssSyncRepository(
+      "did:plc:owner",
+      "rss:one",
+      () => "2026-08-28T12:01:00.000Z",
+    );
     await rss.commitSync({
       sourceId: "rss:one",
       nextCursor: "cursor-2",

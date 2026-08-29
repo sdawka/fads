@@ -184,11 +184,21 @@ export interface OwnerStorageHardeningRepository {
   claimIdempotency(input: IdempotencyClaimInput): Promise<IdempotencyClaimResult>;
   completeIdempotency(input: IdempotencyCompleteInput): Promise<boolean>;
   hydrateContent(ownerId: string, contentIds: readonly string[]): Promise<ContentEnvelope[]>;
-  importSourcesAtomically(ownerId: string, input: readonly OwnerSource[]): Promise<SourceImportResult>;
-  upsertBootstrapSuggestions(ownerId: string, input: readonly InterestSuggestion[]): Promise<InterestSuggestion[]>;
+  importSourcesAtomically(
+    ownerId: string,
+    input: readonly OwnerSource[],
+  ): Promise<SourceImportResult>;
+  upsertBootstrapSuggestions(
+    ownerId: string,
+    input: readonly InterestSuggestion[],
+  ): Promise<InterestSuggestion[]>;
   listConfirmedSuggestions(ownerId: string): Promise<string[]>;
   getContentContext(ownerId: string, contentId: string): Promise<OwnerContentContext | undefined>;
-  validateEditionContentMembership(ownerId: string, editionId: string, contentId: string): Promise<boolean>;
+  validateEditionContentMembership(
+    ownerId: string,
+    editionId: string,
+    contentId: string,
+  ): Promise<boolean>;
   claimSyncWork(input: SyncWorkClaimInput): Promise<SyncWorkClaimResult>;
   completeSyncWork(input: SyncWorkCompleteInput): Promise<boolean>;
 }
@@ -330,9 +340,7 @@ function canonicalSourceUrl(value: string): string {
   return url.toString();
 }
 
-export class D1OwnerDataRepository
-  implements OwnerDataRepository, OwnerStorageHardeningRepository
-{
+export class D1OwnerDataRepository implements OwnerDataRepository, OwnerStorageHardeningRepository {
   constructor(private readonly db: Database) {}
 
   private async envelopeFromRow(row: ContentRow): Promise<ContentEnvelope> {
@@ -1119,9 +1127,7 @@ export class D1OwnerDataRepository
     }
     const deleteIdempotency = preserveIdempotency
       ? this.db
-          .prepare(
-            "DELETE FROM api_idempotency WHERE owner_id = ? AND NOT (scope = ? AND key = ?)",
-          )
+          .prepare("DELETE FROM api_idempotency WHERE owner_id = ? AND NOT (scope = ? AND key = ?)")
           .bind(ownerId, preserveIdempotency.scope, preserveIdempotency.key)
       : this.db.prepare("DELETE FROM api_idempotency WHERE owner_id = ?").bind(ownerId);
     await this.db.batch([
@@ -1493,8 +1499,7 @@ export async function consumeSourceSyncMessage(
   try {
     const result = await sync(message);
     return {
-      outcome:
-        result === "duplicate" ? "duplicate" : result === "retry" ? "retry" : "processed",
+      outcome: result === "duplicate" ? "duplicate" : result === "retry" ? "retry" : "processed",
     };
   } catch (error) {
     const status =

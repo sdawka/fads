@@ -37,10 +37,16 @@ export function createRuntimeRouter(input: { auth: RuntimeAuth; api: RuntimeApiH
 
     const owner = await input.auth.inspect(request);
     if (path === "/api/v1/session" && request.method === "GET") {
-      return privateJson(owner ? { authenticated: true, did: owner.did } : { authenticated: false });
+      return privateJson(
+        owner ? { authenticated: true, did: owner.did } : { authenticated: false },
+      );
     }
     if (!owner) {
-      return problem(401, "Authentication required", "Sign in as the configured owner to continue.");
+      return problem(
+        401,
+        "Authentication required",
+        "Sign in as the configured owner to continue.",
+      );
     }
 
     const response = await input.api(request, owner);
@@ -74,5 +80,9 @@ function methodNotAllowed(allow: string): Response {
 function withPrivateHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set("cache-control", "private, no-store");
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
