@@ -8,11 +8,12 @@ The product is a coherent **private, single-owner alpha**, not a public or multi
 
 Do not deploy the current checkout as production. It is roughly one focused hardening/release cycle away: estimate **2-4 engineering days**, then **3-7 days of real-owner dogfooding**. A public/multi-user beta is a separate phase and should wait until the private product proves useful.
 
-Current repository state at audit time:
+Current repository state at handoff completion:
 
-- `main` at `70fde10` contains only the preserved concept deck.
-- The application is on `feat/first-build` at `6142fb6` before this handoff file.
-- The worktree was clean, but no Git remote was configured. There is no remote CI, PR, deployment, or live smoke evidence.
+- Public repository: <https://github.com/sdawka/fads>. `main` is at `c11f764` with the preserved concept deck and Apache 2.0 license.
+- The application is on `feat/first-build`; pull request: <https://github.com/sdawka/fads/pull/1>.
+- CI test-type drift was fixed in `e86c004`. The pull-request workflow passed on that commit; a duplicate push workflow was still running at handoff. Do not merge until the live PR shows every check green.
+- There is still no deployment or live authenticated smoke evidence.
 - `wrangler.jsonc` still names local resources and contains an all-zero D1 ID. `.dev.vars.example` contains placeholders.
 
 ## Verified now
@@ -20,7 +21,7 @@ Current repository state at audit time:
 - [x] `npm run check`: formatting, lint, typecheck, 201 unit tests, and 36 Worker/D1 tests passed. Astro reported seven non-blocking deprecation/style hints.
 - [x] `npm run test:real-worker`: build and both built-Worker tests passed.
 - [x] `npx wrangler deploy --dry-run`: Wrangler correctly redirected from `wrangler.jsonc` to `dist/server/wrangler.json` and included Astro assets plus D1, Queue, Durable Object, KV session, Images, and Assets bindings. The existing `npm run deploy` shape is therefore valid after real production configuration is supplied.
-- [ ] `npm run test:e2e`: did not start because the local Vite optimizer cache referenced a missing `node_modules/.vite/deps_ssr/astro_runtime_server_astro-global__js.js`. Re-run from a clean `npm ci` checkout and require green CI; do not classify this as an application failure unless it reproduces cleanly.
+- [x] `npm run test:e2e`: all 15 Playwright tests passed locally after refreshing the generated build state.
 - [ ] `npm audit --audit-level=high`: current registry requests hung. The 2026-08-29 audit reported zero high vulnerabilities, but that is historical and must be refreshed before release.
 
 ## P0 — complete before the private alpha
@@ -52,7 +53,7 @@ Current repository state at audit time:
 
 ### 4. Create a real staging and production delivery path
 
-- [ ] Configure a verified Git remote, push the branch, open a PR, and require every CI check to be green before merge.
+- [x] Configure a verified Git remote, push the branch, and open PR #1. Require every CI check to be green before merge.
 - [ ] Add deliberate staging/production Wrangler environments or separate configs. Replace local Worker/Queue names and the zero D1 ID; keep the Astro-generated deploy redirect intact.
 - [ ] Provision D1, Queue, Durable Object migration, the HTTPS app origin/custom domain, and the configured owner DID.
 - [ ] Install `ATPROTO_OAUTH_PRIVATE_JWKS` as a Worker secret. Restrict accepted production keys to the advertised `ES256` / EC P-256 shape, or derive OAuth metadata from the configured key.
