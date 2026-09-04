@@ -124,7 +124,7 @@ function createHarness() {
     Request,
     Response,
     crypto: { randomUUID: () => "queued-1" },
-    fetch: async () => new Response(null, { status: 503 }),
+    fetch: async (_request: Request) => new Response(null, { status: 503 }),
     clients: { claim: async () => undefined },
     registration: { sync: { register: async () => undefined } },
   };

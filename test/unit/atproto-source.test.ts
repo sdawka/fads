@@ -264,7 +264,7 @@ describe("AT Protocol source adapter", () => {
     const source = createAtprotoSourceFromSession({
       ownerDid,
       session: {
-        handle: async (path) => {
+        handle: async (path: string) => {
           paths.push(path);
           return Response.json({ posts: [fullPost] });
         },

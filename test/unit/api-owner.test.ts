@@ -600,10 +600,8 @@ describe("owner API router", () => {
 
     expect(response.status).toBe(201);
     expect(hydrated).toEqual(["candidate:9", "candidate:2"]);
-    expect((await response.json()).content.map((item: { id: string }) => item.id)).toEqual([
-      "candidate:9",
-      "candidate:2",
-    ]);
+    const body = (await response.json()) as { content: Array<{ id: string }> };
+    expect(body.content.map((item) => item.id)).toEqual(["candidate:9", "candidate:2"]);
   });
 
   it("rejects malformed edition domain responses instead of leaking them", async () => {

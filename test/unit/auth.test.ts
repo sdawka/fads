@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { createAtprotoAuth } from "../../src/modules/auth";
 
 const ownerDid = "did:plc:owneralice123";
+const privateJwks = [
+  {
+    kty: "EC" as const,
+    crv: "P-256" as const,
+    x: "x",
+    y: "y",
+    d: "private",
+    kid: "main",
+    alg: "ES256" as const,
+  },
+];
 
 class MemoryOwnerSession {
   readonly apps = new Map<
@@ -96,7 +107,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session: new MemoryOwnerSession(),
       oauthFactory: () => ({
         metadata: {},
@@ -110,7 +121,7 @@ describe("AT Protocol owner authentication", () => {
       }),
     });
 
-    const response = await auth.start(new Request("https://fads.example/oauth/start"));
+    const response = await auth.start();
 
     expect(response.status).toBe(302);
     expect(identifiers).toEqual([ownerDid]);
@@ -120,7 +131,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session: new MemoryOwnerSession(),
     });
 
@@ -138,7 +149,9 @@ describe("AT Protocol owner authentication", () => {
       ].join(" "),
     );
     expect(metadata.scope).not.toContain("transition:generic");
-    expect(jwks).toEqual({ keys: [{ kty: "EC", crv: "P-256", x: "x", y: "y", kid: "main" }] });
+    expect(jwks).toEqual({
+      keys: [{ kty: "EC", crv: "P-256", x: "x", y: "y", kid: "main", alg: "ES256" }],
+    });
   });
 
   it("rate-limits OAuth starts before contacting the authorization server", async () => {
@@ -150,7 +163,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session,
       oauthFactory: () => ({
         metadata: {},
@@ -227,7 +240,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session,
       now: () => timestamp,
       oauthFactory: () => ({
@@ -245,6 +258,7 @@ describe("AT Protocol owner authentication", () => {
       new Request("https://fads.example/oauth/callback?code=code&state=state"),
     );
     const cookie = callback.headers.get("set-cookie")?.split(";")[0];
+    if (!cookie) throw new Error("Expected callback to set an app session cookie");
     timestamp += 8 * 60 * 60 * 1000;
 
     await expect(
@@ -258,7 +272,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session,
       oauthFactory: () => ({
         metadata: {},
@@ -289,7 +303,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session,
       oauthFactory: () => ({
         metadata: {},
@@ -323,7 +337,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session,
       oauthFactory: () => ({
         metadata: {},
@@ -359,7 +373,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session,
       oauthFactory: () => ({
         metadata: {},
@@ -399,7 +413,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session,
       oauthFactory: () => ({
         metadata: {},
@@ -435,7 +449,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session,
       now: () => timestamp,
       oauthFactory: () => ({
@@ -473,7 +487,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session,
       oauthFactory: ({ requestLock }) => ({
         metadata: {},
@@ -517,7 +531,7 @@ describe("AT Protocol owner authentication", () => {
     const auth = createAtprotoAuth({
       ownerDid,
       origin: "https://fads.example",
-      privateJwks: [{ kty: "EC", crv: "P-256", x: "x", y: "y", d: "private", kid: "main" }],
+      privateJwks,
       session: new MemoryOwnerSession(),
       oauthFactory: () => ({
         metadata: {},

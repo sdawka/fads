@@ -43,7 +43,7 @@ describe("foundation Worker", () => {
       },
     ]);
 
-    await worker.queue(batch, appEnv, context);
+    await worker.queue(batch, appEnv);
 
     await expect(getQueueResult(batch, context)).resolves.toMatchObject({ outcome: "ok" });
   });
@@ -51,7 +51,7 @@ describe("foundation Worker", () => {
   it("accepts the configured schedule without retrying it", async () => {
     const controller = createScheduledController({ cron: "*/15 * * * *" });
 
-    await worker.scheduled(controller, appEnv, createExecutionContext());
+    await worker.scheduled(controller, appEnv);
 
     expect(controller.cron).toBe("*/15 * * * *");
   });

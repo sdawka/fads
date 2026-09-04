@@ -234,7 +234,9 @@ test("resumes the validated active edition when the private API is offline", asy
     if (localStorage.getItem("fads-test-offline") !== "true") return;
     const onlineFetch = window.fetch.bind(window);
     window.fetch = (input, init) => {
-      const url = new URL(typeof input === "string" ? input : input.url, location.origin);
+      const href =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(href, location.origin);
       return url.pathname.startsWith("/api/")
         ? Promise.reject(new TypeError("offline"))
         : onlineFetch(input, init);

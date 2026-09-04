@@ -211,9 +211,9 @@ describe("RSS network boundary", () => {
     await expect(large.sync()).rejects.toThrow("byte ceiling");
 
     const slowFetch = vi.fn(
-      (_url: string, init: RequestInit) =>
+      (_url: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
-          init.signal?.addEventListener("abort", () =>
+          init?.signal?.addEventListener("abort", () =>
             reject(new DOMException("aborted", "AbortError")),
           );
         }),

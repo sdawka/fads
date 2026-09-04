@@ -100,7 +100,7 @@ describe("offline mutation outbox", () => {
         body: JSON.stringify({ position: 1 }),
       }),
     );
-    const send = vi.fn(async () => new Response(null, { status: 204 }));
+    const send = vi.fn(async (_entry: OutboxEntry) => new Response(null, { status: 204 }));
     const result = await replayOutbox(store, send);
     expect(send.mock.calls.map(([entry]) => (entry as OutboxEntry).id)).toEqual([
       first.id,

@@ -142,6 +142,7 @@ describe("hardened owner storage", () => {
     expect([first.status, concurrent.status].sort()).toEqual(["claimed", "pending"]);
 
     const winner = first.status === "claimed" ? first : concurrent;
+    if (winner.status !== "claimed") throw new Error("Expected one idempotency claim winner");
     expect(
       await repository.completeIdempotency({
         ...claim,
