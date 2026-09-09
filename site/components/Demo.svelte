@@ -46,8 +46,10 @@
 <section class="demo" id="demo" aria-labelledby="demo-title" aria-busy={!ready} inert={!ready}>
   <div class="demo-copy">
     <p class="section-mark">Try a small edition</p>
-    <h2 id="demo-title">Pick the edge of your attention.</h2>
-    <p>Choose from these sample stories, make an edition, then read until it ends.</p>
+    <h2 id="demo-title">Make a three-piece edition.</h2>
+    <p>Try it with six sample stories. Stay familiar favors established interests; Allow a detour makes room for something less familiar. Choose a direction, then make your edition.</p>
+
+    <p>Switch between Focus, List, and Grid to change how you read the same selection. This demo uses sample content and needs no account.</p>
 
     <div class="choice-row" aria-label="Edition direction">
       <button aria-pressed={draftMode === "familiar"} class:chosen={draftMode === "familiar"} type="button" on:click={() => (draftMode = "familiar")}>Stay familiar</button>

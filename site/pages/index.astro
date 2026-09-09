@@ -1,5 +1,6 @@
 ---
 import Demo from "../components/Demo.svelte";
+import Explanation from "../components/Explanation.astro";
 import "../../src/styles/ui.css";
 
 const title = "f.ads — show me what's cool";
@@ -45,17 +46,11 @@ const description = "A self-hosted, finite reader for your ATProto and RSS sourc
 
       <section class="thesis" aria-labelledby="thesis-title"><div><p class="section-mark">A different contract</p><h2 id="thesis-title">Your feed is a garden, not a slot machine.</h2></div><p>f.ads is a reader you host for yourself. It collects from sources you choose, makes a short edition, and lets the edition finish. There is no engagement treadmill to keep you moving.</p></section>
 
+      <Explanation />
+
       <Demo client:load />
 
-      <section class="principles" aria-label="What f.ads preserves">
-        <article><span>01</span><h2>Structure travels.</h2><p>Read ATProto and RSS sources without asking every source to use the same presentation.</p></article>
-        <article><span>02</span><h2>Every edition ends.</h2><p>Up to twelve pieces, often fewer. When the edition is done, it is done.</p></article>
-        <article><span>03</span><h2>Feedback stays yours.</h2><p>Keep, skip, and occasional surprise feedback shape your private garden, not a public profile.</p></article>
-      </section>
-
-      <section class="frame" aria-labelledby="frame-title"><div><p class="section-mark">A frame can change</p><h2 id="frame-title">One collection. More than one way in.</h2></div><p>Switch between Focus, List, and Grid without losing your place. Add a new frame through a small Svelte component and a pull request. The collection belongs to you; the interface can keep changing.</p><a class="quiet-link" href="/install/">Read the installation guide</a></section>
-
-      <section class="closing"><p>f.ads / show me what’s cool</p><h2>Make a reader that knows when to stop.</h2><a class="primary-link" href="/install/">Host your own f.ads</a></section>
+      <section class="closing"><p>f.ads / show me what’s cool</p><h2>Your sources. Your reader. Your pace.</h2><p class="hosting-note">Run your own copy on Cloudflare, then sign in with your ATProto account. Each installation is for one person.</p><a class="primary-link" href="/install/">Set up your reader</a></section>
     </main>
   </body>
 </html>
@@ -66,6 +61,6 @@ const description = "A self-hosted, finite reader for your ATProto and RSS sourc
   .hero-grid { align-items:center; display:grid; gap:clamp(3rem,8vw,9rem); grid-template-columns:1fr minmax(19rem,.78fr); margin:clamp(4.5rem,10vw,9rem) auto 0; max-width:70rem; }.hero-kicker,.section-mark { color:var(--primary); font-weight:750; margin:0 0 1rem; }.hero h1,.thesis h2,.frame h2,.closing h2 { font-family:var(--font-display,system-ui); font-weight:800; letter-spacing:-.075em; line-height:.86; margin:0; }.hero h1 { font-size:clamp(4rem,9vw,8rem); max-width:7ch; }.hero-copy > p:not(.hero-kicker) { font-size:clamp(1.1rem,2vw,1.5rem); line-height:1.4; max-width:23ch; }.hero-actions { display:flex; flex-wrap:wrap; gap:1rem; margin-top:2rem; }.primary-link { background:var(--primary); border-radius:.45rem; color:white; display:inline-block; font-weight:700; padding:.9rem 1.1rem; text-decoration:none; }.quiet-link { font-weight:700; padding:.9rem 0; text-underline-offset:.25em; }
   .garden-tray { background:var(--card); border:2px solid var(--foreground); box-shadow:12px 12px 0 var(--lime); padding:1rem; transform:rotate(1.5deg); }.tray-title { display:flex; font-size:.82rem; font-weight:700; justify-content:space-between; margin:.2rem 0 1rem; }.tray-title span { color:var(--muted-foreground); }.tray-piece { color:var(--foreground); display:grid; gap:.35rem; margin:.65rem 0; padding:1rem; }.tray-piece span,.tray-piece small { font-size:.75rem; }.tray-piece strong { font-size:1.12rem; line-height:1.1; }.cobalt { background:#cfd8ff; }.lime { background:#dbf78f; }.coral { background:#ffc4ba; }.tray-end { border-top:1px solid #cfd0d8; font-size:.8rem; margin:1rem 0 .1rem; padding-top:.8rem; }
   .thesis,.frame { display:grid; gap:3rem; grid-template-columns:1.15fr .85fr; margin:auto; max-width:76rem; padding:clamp(5rem,11vw,10rem) max(1.25rem,calc((100vw - 76rem)/2)); }.thesis h2,.frame h2,.closing h2 { font-size:clamp(2.8rem,6vw,5.7rem); max-width:10ch; }.thesis > p,.frame > p { font-size:1.18rem; line-height:1.65; margin:3.3rem 0 0; max-width:31rem; }.frame { background:var(--secondary); max-width:none; padding-left:max(1.25rem,calc((100vw - 76rem)/2)); padding-right:max(1.25rem,calc((100vw - 76rem)/2)); }.frame .quiet-link { align-self:end; }
-  .principles { border-block:1px solid var(--border); display:grid; grid-template-columns:repeat(3,1fr); }.principles article { min-height:20rem; padding:clamp(2rem,5vw,4rem); }.principles article + article { border-left:1px solid var(--border); }.principles span { color:var(--primary); font-weight:750; }.principles h2 { font-family:var(--font-display,system-ui); font-size:clamp(2rem,3vw,3rem); letter-spacing:-.06em; line-height:.92; }.principles p { color:var(--muted-foreground); line-height:1.55; max-width:27rem; }.closing { background:var(--primary); color:white; padding:clamp(4rem,10vw,9rem) max(1.25rem,calc((100vw - 76rem)/2)); }.closing p { font-weight:700; }.closing h2 { font-size:clamp(3.5rem,8vw,7rem); max-width:11ch; }.closing .primary-link { background:var(--lime); color:var(--foreground); margin-top:2rem; }
+  .principles { border-block:1px solid var(--border); display:grid; grid-template-columns:repeat(3,1fr); }.principles article { min-height:20rem; padding:clamp(2rem,5vw,4rem); }.principles article + article { border-left:1px solid var(--border); }.principles span { color:var(--primary); font-weight:750; }.principles h2 { font-family:var(--font-display,system-ui); font-size:clamp(2rem,3vw,3rem); letter-spacing:-.06em; line-height:.92; }.principles p { color:var(--muted-foreground); line-height:1.55; max-width:27rem; }.closing { background:var(--primary); color:white; padding:clamp(4rem,10vw,9rem) max(1.25rem,calc((100vw - 76rem)/2)); }.closing p { font-weight:700; }.closing .hosting-note { font-weight:400; font-size:1.15rem; line-height:1.6; max-width:37rem; margin-top:2rem; }.closing h2 { font-size:clamp(3.5rem,8vw,7rem); max-width:11ch; }.closing .primary-link { background:var(--lime); color:var(--foreground); margin-top:2rem; }
   @media (max-width: 720px) { .hero { min-height:auto; }.hero-grid,.thesis,.frame { display:block; }.garden-tray { margin:3rem auto 0; max-width:27rem; }.thesis > p,.frame > p { margin-top:2rem; }.principles { display:block; }.principles article + article { border-left:0; border-top:1px solid var(--border); }.frame .quiet-link { display:inline-block; margin-top:1rem; } } @media (prefers-reduced-motion: reduce) { :global(html) { scroll-behavior:auto; } }
 </style>
