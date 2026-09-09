@@ -22,9 +22,7 @@ jobs:
       - run: npm run build
       - run: npm run test:real-worker
       - name: Install Playwright browser
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       - run: npm run test:e2e
       - run: npm run build:site
       - run: npm run test:site

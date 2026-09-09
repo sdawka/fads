@@ -651,8 +651,18 @@ describe("owner API router", () => {
     const repo = repository();
     const saveSource = repo.saveSource;
     let saves = 0;
+    let operationStarted!: () => void;
+    let continueOperation!: () => void;
+    const started = new Promise<void>((resolve) => {
+      operationStarted = resolve;
+    });
+    const continued = new Promise<void>((resolve) => {
+      continueOperation = resolve;
+    });
     repo.saveSource = async (item) => {
       saves += 1;
+      operationStarted();
+      await continued;
       return saveSource(item);
     };
     const handler = createOwnerApiHandler(dependencies({ repository: repo }));
@@ -667,10 +677,14 @@ describe("owner API router", () => {
         }),
       });
 
-    const responses = await Promise.all([handler(request()), handler(request())]);
+    const firstResponse = handler(request());
+    await started;
+    const secondResponse = await handler(request());
+    continueOperation();
 
     expect(saves).toBe(1);
-    expect(responses.map((response) => response.status).sort()).toEqual([201, 425]);
+    expect((await firstResponse).status).toBe(201);
+    expect(secondResponse.status).toBe(425);
   });
 
   it("matches route segments exactly and reports methods before idempotency", async () => {
