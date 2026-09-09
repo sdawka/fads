@@ -18,3 +18,4 @@
 - 2026-09-09T12:19:00-04:00 — Implement homepage motion native-first instead of adding an animation runtime.
 - 2026-09-09T12:20:00-04:00 — Keep the award-winning homepage motion guidance as a reusable personal Codex skill.
 - 2026-09-09T14:45:06-04:00 — Deploy the latest `main` build, clean up safely merged local Git state, and draft a short post explaining why f.ads could be compelling.
+- 2026-09-09T14:54:24-04:00 — Write the launch post conversationally, opening with the recent discovery of ATProto and personal excitement about it.
