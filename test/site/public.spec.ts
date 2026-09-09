@@ -74,3 +74,21 @@ test("static deployment applies security headers to both public pages", async ({
     expect(response.headers()["referrer-policy"]).toBe("no-referrer");
   }
 });
+
+test("demo waits for hydration before accepting its first click", async ({ page }) => {
+  let releaseScript: (() => void) | undefined;
+  const blocked = new Promise<void>((resolve) => {
+    releaseScript = resolve;
+  });
+  await page.route("**/_astro/Demo.*.js", async (route) => {
+    await blocked;
+    await route.continue();
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#demo")).toHaveAttribute("inert", "");
+  await expect(page.locator("#demo")).toHaveAttribute("aria-busy", "true");
+  releaseScript?.();
+  await expect(page.locator("#demo")).not.toHaveAttribute("inert", "");
+  await page.getByRole("button", { name: "Grid", exact: true }).click();
+  await expect(page.getByRole("list", { name: /edition items/ })).toBeVisible();
+});

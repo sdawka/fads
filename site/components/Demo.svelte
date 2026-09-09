@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  let ready = false;
+  onMount(() => { ready = true; });
   import Reader from "../../src/components/reader/Reader.svelte";
   import type { FeedbackKind } from "../../src/components/models";
   import {
@@ -40,7 +43,7 @@
   }
 </script>
 
-<section class="demo" id="demo" aria-labelledby="demo-title">
+<section class="demo" id="demo" aria-labelledby="demo-title" aria-busy={!ready} inert={!ready}>
   <div class="demo-copy">
     <p class="section-mark">Try a small edition</p>
     <h2 id="demo-title">Pick the edge of your attention.</h2>
@@ -55,7 +58,7 @@
   </div>
 
   <div class="reader-stage">
-    <div class="demo-label"><span></span> Local, resettable demo</div>
+    <div class="demo-label"><span></span> {ready ? "Local, resettable demo" : "Loading interactive demo…"}</div>
     <Reader
       {view}
       {keptIds}
