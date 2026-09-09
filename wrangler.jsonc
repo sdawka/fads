@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "fads-local",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-28",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fads-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "queues": {
+    "producers": [{ "binding": "INGESTION_QUEUE", "queue": "fads-ingestion-local" }],
+    "consumers": [{ "queue": "fads-ingestion-local" }],
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "OWNER_SESSION", "class_name": "OwnerSessionDO" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OwnerSessionDO"] }],
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+}

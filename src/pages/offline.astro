@@ -1,0 +1,21 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="f.ads — offline">
+  <main class="offline-shell" aria-labelledby="offline-title">
+    <p class="eyebrow">NO CONNECTION</p>
+    <h1 id="offline-title">Your reading surface is offline.</h1>
+    <p>Return when you are connected to resume the active edition. f.ads never invents a recommendation without its source.</p>
+    <a href="/">Try again</a>
+  </main>
+</BaseLayout>
+
+<style>
+  .offline-shell { min-height: 100svh; display: grid; align-content: center; max-width: 44rem; margin: auto; padding: 2rem; }
+  .eyebrow { color: var(--ember); font: 0.7rem var(--utility); letter-spacing: 0.12em; }
+  h1 { max-width: 12ch; margin: 0; font: 400 clamp(3rem, 8vw, 6rem)/0.9 var(--display); letter-spacing: -0.06em; }
+  p:not(.eyebrow) { max-width: 34rem; color: var(--muted); line-height: 1.6; }
+  a { color: var(--ember); text-underline-offset: 0.3em; }
+</style>
+

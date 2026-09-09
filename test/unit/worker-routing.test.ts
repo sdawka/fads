@@ -1,0 +1,57 @@
+import { describe, expect, it, vi } from "vitest";
+import { createFetchHandler } from "../../src/worker-routing";
+
+describe("Worker fetch routing", () => {
+  it("adds browser security headers to application and health responses", async () => {
+    const fetch = createFetchHandler(async () => new Response("rendered by Astro"));
+
+    for (const path of ["/", "/api/health"]) {
+      const response = await fetch(
+        new Request(`https://fads.cc${path}`),
+        {} as Env,
+        {} as ExecutionContext,
+      );
+      expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(response.headers.get("permissions-policy")).toContain("camera=()");
+      expect(response.headers.get("content-security-policy")).toContain(
+        "img-src 'self' data: https:",
+      );
+      expect(response.headers.get("content-security-policy")).toContain("media-src 'self' https:");
+    }
+  });
+
+  it("delegates non-API traffic to the supplied Astro handler", async () => {
+    const fetch = createFetchHandler(async () => new Response("rendered by Astro"));
+
+    const response = await fetch(new Request("https://f.ads/"), {} as Env, {} as ExecutionContext);
+
+    expect(await response.text()).toBe("rendered by Astro");
+  });
+
+  it("gives runtime routes precedence over Astro without exposing unknown API paths", async () => {
+    const astro = vi.fn(async () => new Response("rendered by Astro"));
+    const runtime = vi.fn(async (request: Request) =>
+      new URL(request.url).pathname === "/oauth/jwks.json"
+        ? Response.json({ keys: [] })
+        : undefined,
+    );
+    const fetch = createFetchHandler(astro, runtime);
+
+    const runtimeResponse = await fetch(
+      new Request("https://fads.cc/oauth/jwks.json"),
+      {} as Env,
+      {} as ExecutionContext,
+    );
+    const astroResponse = await fetch(
+      new Request("https://fads.cc/keeps"),
+      {} as Env,
+      {} as ExecutionContext,
+    );
+
+    await expect(runtimeResponse.json()).resolves.toEqual({ keys: [] });
+    await expect(astroResponse.text()).resolves.toBe("rendered by Astro");
+    expect(astro).toHaveBeenCalledOnce();
+  });
+});

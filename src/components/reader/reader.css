@@ -1,0 +1,192 @@
+.reader {
+  min-width: 0;
+  color: var(--foreground);
+  font-family: var(--font-body);
+}
+.reader .reader-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1rem;
+}
+.reader .reader-bar [role="group"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.reader button {
+  cursor: pointer;
+}
+.reader button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.reader .reader-bar button[aria-pressed="true"] {
+  background: var(--lime);
+  color: var(--accent-foreground);
+  border-color: transparent;
+}
+.reader .reader-bar p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+.reader .reader-index {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  margin: 1.5rem 0;
+  list-style: none;
+}
+.reader .reader-index li {
+  min-width: 0;
+}
+.reader .reader-index button {
+  display: grid;
+  grid-template-columns: 2rem 1fr;
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  padding: 1rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--foreground);
+}
+.reader .reader-index button:hover {
+  border-color: var(--primary);
+  background: var(--secondary);
+}
+.reader .reader-index strong {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.reader .reader-index small {
+  grid-column: 2;
+  color: var(--muted-foreground);
+}
+.reader .reader-grid .reader-index {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+}
+.reader .reader-grid button {
+  height: 100%;
+  min-height: 11rem;
+  grid-template-columns: 1fr;
+  align-content: start;
+  gap: 0.8rem;
+  border-top: 0.35rem solid var(--primary);
+}
+.reader .reader-grid li:nth-child(3n + 2) button {
+  border-top-color: var(--lime);
+}
+.reader .reader-grid li:nth-child(3n) button {
+  border-top-color: var(--coral);
+}
+.reader .reader-grid small {
+  grid-column: 1;
+  align-self: end;
+}
+.reader .reading-canvas {
+  max-width: 66ch;
+  margin: 1.5rem auto;
+}
+.reader .reading-canvas > header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+.reader .reader-reason {
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  margin: 0.6rem 0;
+}
+.reader .reading-canvas h1 {
+  font-family: var(--font-display);
+  font-size: clamp(1.8rem, 3vw, 3.3rem);
+  letter-spacing: -0.045em;
+  line-height: 1.03;
+  margin: 1.25rem 0;
+  overflow-wrap: anywhere;
+}
+.reader .safe-blocks {
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+.reader .feedback,
+.reader .reader-explanation {
+  border-top: 1px solid var(--border);
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+}
+.reader .reader-explanation {
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.reader summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.reader .feedback p {
+  margin: 0 0 0.7rem;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+}
+.reader .feedback button,
+.reader nav button {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--foreground);
+}
+.reader .feedback button {
+  margin: 0 0.4rem 0.4rem 0;
+}
+.reader .feedback button[aria-pressed="true"] {
+  background: var(--lime);
+}
+.reader nav button {
+  min-height: 48px;
+}
+.reader nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+.reader nav button:last-child {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: transparent;
+}
+.reader .reader-end {
+  padding: 3rem 1rem;
+  text-align: center;
+}
+.reader .reader-end h1 {
+  font: 700 clamp(2rem, 5vw, 3.5rem)/1 var(--font-display);
+}
+.reader .reader-end p {
+  max-width: 35ch;
+  margin: 1rem auto;
+  line-height: 1.6;
+}
+.reader .reader-status {
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--secondary);
+  font-size: 0.9rem;
+}
