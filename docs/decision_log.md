@@ -7,3 +7,5 @@
 - 2026-09-08T20:48:09-04:00 — One person per installation, superseding public multi-user signup. The public site provides a demo and Cloudflare installation guidance.
 - 2026-09-08T20:48:09-04:00 — Ship Focus, List, and Grid layouts with click-to-load images, audio, and video.
 - 2026-09-08T20:48:09-04:00 — Approved implementation of the proposed plan: Astro/Svelte, shadcn-svelte with shared tokens, thin registered frames, onboarding and reliability fixes, separate static public build, and self-hosting instructions.
+
+- 2026-09-08T21:49:49-04:00 — Merge the completed work, deploy the public landing page to fads.cc, and verify it live.

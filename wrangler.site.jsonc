@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "fads-site",
+  "routes": [{ "pattern": "fads.cc", "custom_domain": true }],
   "compatibility_date": "2026-08-28",
   "assets": { "directory": "./dist-site", "not_found_handling": "404-page" },
 }
