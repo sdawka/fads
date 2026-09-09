@@ -1,6 +1,15 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+test("homepage makes the public source repository discoverable", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByRole("link", { name: "GitHub", exact: true })).toHaveAttribute(
+    "href",
+    "https://github.com/sdawka/fads",
+  );
+});
+
 test("demo changes layout without replacing content, then ends deliberately", async ({ page }) => {
   const privateRequests: string[] = [];
   page.on("request", (request) => {
