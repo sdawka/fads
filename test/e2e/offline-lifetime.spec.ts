@@ -48,10 +48,15 @@ async function routeReader(page: Page, expiresAt: string) {
 }
 
 test("removes an already visible edition at the absolute session expiry", async ({ page }) => {
-  await routeReader(page, new Date(Date.now() + 1_500).toISOString());
+  await page.clock.install({ time: new Date("2026-09-08T12:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-09-08T12:00:01Z"));
+  await routeReader(page, "2026-09-08T12:01:01Z");
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "A finite offline session" })).toBeVisible();
+  await page.clock.fastForward(59_999);
+  await expect(page.getByRole("heading", { name: "A finite offline session" })).toBeVisible();
+  await page.clock.fastForward(1);
   await expect(
     page.getByRole("heading", { name: "A quieter place to follow your curiosity." }),
   ).toBeVisible({ timeout: 5_000 });
