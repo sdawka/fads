@@ -9,3 +9,5 @@
 - 2026-09-08T20:48:09-04:00 — Approved implementation of the proposed plan: Astro/Svelte, shadcn-svelte with shared tokens, thin registered frames, onboarding and reliability fixes, separate static public build, and self-hosting instructions.
 
 - 2026-09-08T21:49:49-04:00 — Merge the completed work, deploy the public landing page to fads.cc, and verify it live.
+
+- 2026-09-08T22:22:19-04:00 — Preserve the first two landing-page sections; explain the remaining page for newcomers who may know ATProto, using SVGs and diagrams.
