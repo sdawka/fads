@@ -78,6 +78,8 @@ export default tseslint.config(
   {
     ignores: [
       "dist",
+      "dist-site",
+      ".astro-site",
       ".astro",
       ".wrangler",
       "coverage",

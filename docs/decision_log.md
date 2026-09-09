@@ -1,0 +1,9 @@
+# Decisions
+
+- 2026-09-08T20:48:09-04:00 — Build the reader and landing page together, using the original concept's language with a different visual style and a component library customized through our own tokens.
+- 2026-09-08T20:48:09-04:00 — Initially selected public self-service access; superseded below by one-person self-hosting.
+- 2026-09-08T20:48:09-04:00 — Use ATProto sign-in and ship the personal-reader scope. Keep the reader layer easy to modify; custom frontends can arrive through plugins or PR contributions.
+- 2026-09-08T20:48:09-04:00 — Choose a bright digital playground visual direction and self-hosted-first distribution.
+- 2026-09-08T20:48:09-04:00 — One person per installation, superseding public multi-user signup. The public site provides a demo and Cloudflare installation guidance.
+- 2026-09-08T20:48:09-04:00 — Ship Focus, List, and Grid layouts with click-to-load images, audio, and video.
+- 2026-09-08T20:48:09-04:00 — Approved implementation of the proposed plan: Astro/Svelte, shadcn-svelte with shared tokens, thin registered frames, onboarding and reliability fixes, separate static public build, and self-hosting instructions.

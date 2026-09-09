@@ -1,5 +1,9 @@
 node_modules/
 dist/
+dist-site/
+.astro-site/
+wrangler.install.jsonc
+.fads-install/
 .astro/
 .wrangler/
 .dev.vars

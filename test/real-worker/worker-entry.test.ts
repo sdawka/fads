@@ -37,6 +37,9 @@ describe("built Worker entry", () => {
   it("serves health and delegates non-API requests to the built Astro application", async () => {
     const context = createExecutionContext();
     const health = await worker.fetch(new Request("https://f.ads/api/health"), appEnv, context);
+    const ready = await worker.fetch(new Request("https://f.ads/api/ready"), appEnv, context);
+    expect(ready.status).toBe(200);
+    await expect(ready.json()).resolves.toEqual({ status: "ready" });
     const page = await worker.fetch(new Request("https://f.ads/"), appEnv, context);
     const concept = await worker.fetch(new Request("https://f.ads/concept/"), appEnv, context);
 

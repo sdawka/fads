@@ -2,10 +2,13 @@
 
 const VERSION = "v1";
 const SHELL_CACHE = `fads-shell-${VERSION}`;
-const EDITION_CACHE = `fads-edition-${VERSION}`;
+const EDITION_CACHE = "fads-edition-v2";
+const LEGACY_EDITION_CACHE = "fads-edition-v1";
 const DB_NAME = "fads-offline-v1";
 const DB_STORE = "outbox";
 const ACTIVE_EDITION_PATH = "/api/v1/editions/active";
+const SESSION_PATH = "/__offline/session";
+const SESSION_API_PATH = "/api/v1/session";
 const STATIC_ASSETS = [
   "/",
   "/offline",
@@ -17,6 +20,18 @@ const STATIC_ASSETS = [
 
 function sameOrigin(url) {
   return url.origin === self.location.origin;
+}
+
+function validSession(value, now = Date.now()) {
+  if (!value || typeof value !== "object" || !exactKeys(value, ["did", "expiresAt"])) return false;
+  if (
+    typeof value.did !== "string" ||
+    !/^did:[a-z0-9]+:[A-Za-z0-9._:%-]+(?::[A-Za-z0-9._:%-]+)*$/.test(value.did)
+  )
+    return false;
+  if (typeof value.expiresAt !== "string") return false;
+  const expiresAt = Date.parse(value.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt > now;
 }
 
 function validEdition(value) {
@@ -316,8 +331,47 @@ function clearOffline() {
   return Promise.all([
     caches.open(SHELL_CACHE).then((cache) => cache.addAll(STATIC_ASSETS).catch(() => undefined)),
     caches.delete(EDITION_CACHE),
+    caches.delete(LEGACY_EDITION_CACHE),
     dbRequest("readwrite", (store) => store.clear()),
   ]);
+}
+
+async function readOfflineSession() {
+  const cached = await (await caches.open(EDITION_CACHE)).match(SESSION_PATH);
+  if (!cached) return undefined;
+  try {
+    const value = await cached.json();
+    return validSession(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function requireOfflineSession() {
+  const session = await readOfflineSession();
+  if (session) return session;
+  await clearOffline();
+  return undefined;
+}
+
+async function setOfflineSession(session) {
+  if (!validSession(session)) {
+    await clearOffline();
+    return false;
+  }
+  const previous = await readOfflineSession();
+  if (!previous || previous.did !== session.did || previous.expiresAt !== session.expiresAt)
+    await clearOffline();
+  await caches.delete(LEGACY_EDITION_CACHE);
+  await (
+    await caches.open(EDITION_CACHE)
+  ).put(
+    SESSION_PATH,
+    new Response(JSON.stringify(session), {
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
+    }),
+  );
+  return true;
 }
 
 function requestReplay() {
@@ -400,6 +454,7 @@ async function enqueue(request) {
 }
 
 async function replayOnce() {
+  if (!(await requireOfflineSession())) return;
   const entries = (await listOutbox()).sort(
     (a, b) => a.createdAt - b.createdAt || a.sequence - b.sequence || a.id.localeCompare(b.id),
   );
@@ -422,6 +477,10 @@ async function replayOnce() {
     if (response.ok) {
       await removeOutbox(entry.id);
       continue;
+    }
+    if (response.status === 401) {
+      await clearOffline();
+      return;
     }
     if (
       response.status >= 500 ||
@@ -462,37 +521,69 @@ function transient(response) {
 async function activeEdition(request) {
   try {
     const response = await fetch(request);
+    if (response.status === 401) {
+      await clearOffline();
+      return response;
+    }
     if (!response.ok) return response;
     const clone = response.clone();
     const value = await clone.json();
-    if (validEdition(value)) {
+    const session = await requireOfflineSession();
+    if (session && validEdition(value) && value.edition.ownerId === session.did) {
       const cache = await caches.open(EDITION_CACHE);
       await cache.put(request, response.clone());
+    } else if (session && validEdition(value) && value.edition.ownerId !== session.did) {
+      await clearOffline();
     }
     return response;
   } catch {
-    return (await caches.open(EDITION_CACHE)).match(request) || new Response("", { status: 503 });
+    const session = await requireOfflineSession();
+    if (!session) return new Response("", { status: 503 });
+    const cached = await (await caches.open(EDITION_CACHE)).match(request);
+    if (!cached) return new Response("", { status: 503 });
+    try {
+      const value = await cached.clone().json();
+      if (validEdition(value) && value.edition.ownerId === session.did) return cached;
+    } catch {
+      // Invalid private cache entries are removed below.
+    }
+    await clearOffline();
+    return new Response("", { status: 503 });
   }
 }
 
 async function cacheCreatedEdition(response) {
+  if (response.status === 401) {
+    await clearOffline();
+    return;
+  }
   if (!response.ok) return;
   try {
     const value = await response.clone().json();
-    if (validEdition(value))
+    const session = await requireOfflineSession();
+    if (session && validEdition(value) && value.edition.ownerId === session.did)
       await (await caches.open(EDITION_CACHE)).put(ACTIVE_EDITION_PATH, response.clone());
+    else if (session && validEdition(value) && value.edition.ownerId !== session.did)
+      await clearOffline();
   } catch {
     // The API response remains authoritative even if a defensive cache update fails.
   }
 }
 
 async function updateCachedProgress(editionId, position, completed) {
+  const session = await requireOfflineSession();
+  if (!session) return;
   const cache = await caches.open(EDITION_CACHE);
   const cached = await cache.match(ACTIVE_EDITION_PATH);
   if (!cached) return;
   try {
     const value = await cached.json();
-    if (!validEdition(value) || value.edition.id !== editionId) return;
+    if (
+      !validEdition(value) ||
+      value.edition.ownerId !== session.did ||
+      value.edition.id !== editionId
+    )
+      return;
     const updated = { ...value, position, completed };
     if (validEdition(updated))
       await cache.put(
@@ -507,6 +598,10 @@ async function updateCachedProgress(editionId, position, completed) {
 }
 
 async function applyProgressResponse(url, response) {
+  if (response.status === 401) {
+    await clearOffline();
+    return;
+  }
   if (!response.ok) return;
   const match = /^\/api\/v1\/editions\/([^/]+)\/(progress|complete)$/.exec(url.pathname);
   if (!match) return;
@@ -527,6 +622,7 @@ async function applyProgressResponse(url, response) {
 }
 
 async function applyQueuedProgress(request) {
+  if (!(await requireOfflineSession())) return;
   const url = new URL(request.url);
   const match = /^\/api\/v1\/editions\/([^/]+)\/(progress|complete)$/.exec(url.pathname);
   if (!match) return;
@@ -562,6 +658,54 @@ async function precacheShell() {
   }
 }
 
+async function inspectSession(request) {
+  const response = await fetch(request);
+  if (response.status === 401) {
+    await clearOffline();
+    return response;
+  }
+  if (!response.ok) return response;
+  try {
+    const value = await response.clone().json();
+    if (value && typeof value === "object" && exactKeys(value, ["authenticated"])) {
+      if (value.authenticated === false) await clearOffline();
+      else await clearOffline();
+    } else if (
+      value &&
+      typeof value === "object" &&
+      exactKeys(value, ["authenticated", "did", "expiresAt"]) &&
+      value.authenticated === true
+    ) {
+      await setOfflineSession({ did: value.did, expiresAt: value.expiresAt });
+    } else {
+      await clearOffline();
+    }
+  } catch {
+    await clearOffline();
+  }
+  return response;
+}
+
+async function passPrivateApi(request, url) {
+  let fullReset = false;
+  if (request.method === "POST" && url.pathname === "/api/v1/reset") {
+    try {
+      const body = await request.clone().json();
+      fullReset = body && typeof body === "object" && body.full === true;
+    } catch {
+      // The server still owns request validation.
+    }
+  }
+  const response = await fetch(request);
+  if (
+    response.status === 401 ||
+    (response.ok && request.method === "POST" && url.pathname === "/api/v1/logout") ||
+    (response.ok && fullReset)
+  )
+    await clearOffline();
+  return response;
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(precacheShell().then(() => self.skipWaiting()));
 });
@@ -577,13 +721,25 @@ self.addEventListener("activate", (event) => {
             .map((key) => caches.delete(key)),
         ),
       )
-      .then(() => clients.claim()),
+      .then(async () => {
+        if (!(await readOfflineSession())) await clearOffline();
+        await clients.claim();
+      }),
   );
 });
 
 self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "CLEAR_OFFLINE") event.waitUntil(clearOffline());
-  if (event.data && event.data.type === "REPLAY_OFFLINE") event.waitUntil(replay());
+  let operation;
+  if (event.data && event.data.type === "CLEAR_OFFLINE") operation = clearOffline();
+  if (event.data && event.data.type === "REPLAY_OFFLINE") operation = replay();
+  if (event.data && event.data.type === "SET_OFFLINE_SESSION")
+    operation = setOfflineSession(event.data.session);
+  if (operation)
+    event.waitUntil(
+      operation.finally(() => {
+        if (event.ports && event.ports[0]) event.ports[0].postMessage({ acknowledged: true });
+      }),
+    );
 });
 
 self.addEventListener("sync", (event) => {
@@ -594,6 +750,10 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (!sameOrigin(url)) return;
+  if (request.method === "GET" && url.pathname === SESSION_API_PATH && !url.search) {
+    event.respondWith(inspectSession(request));
+    return;
+  }
   if (request.method === "GET" && url.pathname === ACTIVE_EDITION_PATH && !url.search) {
     event.respondWith(activeEdition(request));
     return;
@@ -638,11 +798,16 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then(async (response) => {
+          if (response.status === 401) {
+            await clearOffline();
+            return response;
+          }
           if (!transient(response)) {
             await applyProgressResponse(url, response);
             return response;
           }
           try {
+            if (!(await requireOfflineSession())) return response;
             await enqueue(replayRequest);
             await applyQueuedProgress(replayRequest);
             await requestReplay();
@@ -656,6 +821,7 @@ self.addEventListener("fetch", (event) => {
         })
         .catch(async () => {
           try {
+            if (!(await requireOfflineSession())) throw new Error("Offline session unavailable.");
             await enqueue(replayRequest);
             await applyQueuedProgress(replayRequest);
             await requestReplay();
@@ -671,5 +837,9 @@ self.addEventListener("fetch", (event) => {
           }
         }),
     );
+    return;
+  }
+  if (url.pathname.startsWith("/api/v1/")) {
+    event.respondWith(passPrivateApi(request, url));
   }
 });

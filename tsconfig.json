@@ -1,6 +1,8 @@
 {
   "extends": "astro/tsconfigs/strict",
   "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "$lib": ["./src/lib"], "$lib/*": ["./src/lib/*"] },
     "allowJs": false,
     "noEmit": true,
     "moduleResolution": "bundler",
@@ -8,11 +10,14 @@
   },
   "include": [
     "src",
+    "site",
+    "astro.site.config.ts",
     "astro.config.ts",
     "vitest.config.ts",
     "vitest.real-worker.config.ts",
     "vitest.workers.config.ts",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "playwright.site.config.ts"
   ],
   "exclude": ["test"]
 }

@@ -1,0 +1,31 @@
+/* The public site and every reader frame share this vocabulary. */
+:root {
+  --background: #f5f6fa;
+  --foreground: #151824;
+  --card: #ffffff;
+  --card-foreground: #151824;
+  --popover: #ffffff;
+  --popover-foreground: #151824;
+  --primary: #2643e9;
+  --primary-foreground: #ffffff;
+  --secondary: #e9edff;
+  --secondary-foreground: #2038b6;
+  --muted: #eceef4;
+  --muted-foreground: #565d70;
+  --accent: #d5f44a;
+  --accent-foreground: #202800;
+  --destructive: #b6253b;
+  --destructive-foreground: #ffffff;
+  --border: #d5d9e4;
+  --input: #c1c7d6;
+  --ring: #2643e9;
+  --lime: #d5f44a;
+  --coral: #ff775e;
+  --radius: 0.875rem;
+  --font-display: "Bricolage Grotesque Variable", system-ui, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --space-unit: 0.25rem;
+  --shadow-soft: 0 12px 40px rgb(21 24 36 / 6%);
+  --duration-fast: 140ms;
+  --duration-normal: 220ms;
+}

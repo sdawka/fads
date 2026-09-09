@@ -15,6 +15,7 @@ import {
   KeepCreateSchema,
   KeepResponseSchema,
   KeepsResponseSchema,
+  LearnedPreferencesResponseSchema,
   ManualInterestSchema,
   OpmlImportResponseSchema,
   OwnerExportSchema,
@@ -36,6 +37,7 @@ import {
   type InterestSuggestion,
 } from "../../contracts";
 import { discoverManualFeed, exportOpml, importOpml } from "../content";
+import type { AuthenticatedOwner } from "../auth";
 import type { OwnerDataRepository, OwnerSource, OwnerStorageHardeningRepository } from "../storage";
 
 const API_PREFIX = "/api/v1";
@@ -72,11 +74,15 @@ export interface OwnerEditionOperations {
 
 export interface OwnerApiDependencies {
   ownerDid: string;
-  authenticate(request: Request): Promise<{ did: string } | undefined>;
+  authenticate(request: Request): Promise<AuthenticatedOwner | undefined>;
   logout(request: Request, options?: { allSessions?: boolean }): Promise<Response>;
+  withMutation<T>(operation: () => Promise<T>): Promise<T>;
   repository: ApiRepository;
   editions: OwnerEditionOperations;
   enqueueSource?: (message: ReturnType<typeof SyncSourceMessageSchema.parse>) => Promise<void>;
+  enqueueSources?: (
+    messages: readonly ReturnType<typeof SyncSourceMessageSchema.parse>[],
+  ) => Promise<void | { failedSourceIds: readonly string[] }>;
   now?: () => string;
   id?: () => string;
 }
@@ -93,6 +99,7 @@ type RouteName =
   | "suggestions"
   | "suggestion"
   | "preferences"
+  | "learnedPreferences"
   | "editions"
   | "activeEdition"
   | "edition"
@@ -309,6 +316,9 @@ function matchRoute(pathname: string): RouteMatch | undefined {
   }
   if (parts.length === 2) {
     if (parts[0] === "sources" && parts[1] === "opml") return matched("opml", ["GET", "POST"]);
+    if (parts[0] === "profile" && parts[1] === "learned") {
+      return matched("learnedPreferences", ["GET"]);
+    }
     if (parts[0] === "editions" && parts[1] === "active") return matched("activeEdition", ["GET"]);
     if (parts[0] === "sources") return matched("source", ["DELETE"], parts[1]);
     if (parts[0] === "interests") return matched("interest", ["DELETE"], parts[1]);
@@ -369,7 +379,7 @@ export function createOwnerApiHandler(dependencies: OwnerApiDependencies) {
     if (!match) return problem(404, "Not found", undefined, url.pathname);
     if (!match.allow.includes(request.method)) return methodNotAllowed(match);
 
-    let owner: { did: string } | undefined;
+    let owner: AuthenticatedOwner | undefined;
     try {
       owner = await dependencies.authenticate(request);
     } catch {
@@ -378,124 +388,139 @@ export function createOwnerApiHandler(dependencies: OwnerApiDependencies) {
     if (match.name === "session") {
       if (!owner) return typedJson(SessionResponseSchema, { authenticated: false });
       if (owner.did !== dependencies.ownerDid) return problem(403, "Owner access required");
-      return typedJson(SessionResponseSchema, { authenticated: true, did: owner.did });
+      return typedJson(SessionResponseSchema, {
+        authenticated: true,
+        did: owner.did,
+        expiresAt: owner.expiresAt,
+      });
     }
     if (!owner) return problem(401, "Authentication required");
     if (owner.did !== dependencies.ownerDid) return problem(403, "Owner access required");
 
-    const isMutation = request.method !== "GET";
-    let raw = "";
-    let idempotency:
-      { key: string; requestHash: string; claimToken: string; claimedAt: string } | undefined;
-    let mutationSeed = "";
-    try {
-      if (isMutation) {
-        raw = await readBoundedBody(request);
-        const parsedKey = IdempotencyKeySchema.safeParse(request.headers.get("idempotency-key"));
-        if (!parsedKey.success) {
-          return problem(400, "Invalid request", "A bounded Idempotency-Key is required.");
+    const execute = async (): Promise<Response> => {
+      const isMutation = request.method !== "GET";
+      let raw = "";
+      let idempotency:
+        { key: string; requestHash: string; claimToken: string; claimedAt: string } | undefined;
+      let mutationSeed = "";
+      try {
+        if (isMutation) {
+          raw = await readBoundedBody(request);
+          const parsedKey = IdempotencyKeySchema.safeParse(request.headers.get("idempotency-key"));
+          if (!parsedKey.success) {
+            return problem(400, "Invalid request", "A bounded Idempotency-Key is required.");
+          }
+          const scope = `${request.method} ${url.pathname}`;
+          const requestHash = await digest(`${scope}\n${raw}`);
+          const claimedAt = now();
+          const claimedAtMs = new Date(claimedAt).getTime();
+          const expiresAt = new Date(claimedAtMs + DAY_MS).toISOString();
+          const claim = await dependencies.repository.claimIdempotency({
+            ownerId: owner.did,
+            scope,
+            key: parsedKey.data,
+            requestHash,
+            now: claimedAt,
+            expiresAt,
+            pendingReclaimBefore: new Date(
+              claimedAtMs - IDEMPOTENCY_PENDING_LEASE_MS,
+            ).toISOString(),
+            claimToken: crypto.randomUUID(),
+          });
+          if (claim.status === "conflict") {
+            return problem(
+              409,
+              "Idempotency conflict",
+              "The key was already used for another request.",
+            );
+          }
+          if (claim.status === "pending") {
+            return problem(
+              425,
+              "Request is already pending",
+              "Retry after the in-flight request completes.",
+            );
+          }
+          if (claim.status === "completed") return withPrivateHeaders(claim.response, true);
+          idempotency = {
+            key: parsedKey.data,
+            requestHash,
+            claimToken: claim.claimToken,
+            claimedAt,
+          };
+          mutationSeed = await digest(`${owner.did}\n${scope}\n${parsedKey.data}\n${requestHash}`);
         }
-        const scope = `${request.method} ${url.pathname}`;
-        const requestHash = await digest(`${scope}\n${raw}`);
-        const claimedAt = now();
-        const claimedAtMs = new Date(claimedAt).getTime();
-        const expiresAt = new Date(claimedAtMs + DAY_MS).toISOString();
-        const claim = await dependencies.repository.claimIdempotency({
-          ownerId: owner.did,
-          scope,
-          key: parsedKey.data,
-          requestHash,
-          now: claimedAt,
-          expiresAt,
-          pendingReclaimBefore: new Date(claimedAtMs - IDEMPOTENCY_PENDING_LEASE_MS).toISOString(),
-          claimToken: crypto.randomUUID(),
-        });
-        if (claim.status === "conflict") {
-          return problem(
-            409,
-            "Idempotency conflict",
-            "The key was already used for another request.",
-          );
+      } catch (error) {
+        if (error instanceof RequestFailure) {
+          return problem(error.status, error.title, error.detail, url.pathname);
         }
-        if (claim.status === "pending") {
-          return problem(
-            425,
-            "Request is already pending",
-            "Retry after the in-flight request completes.",
-          );
-        }
-        if (claim.status === "completed") return withPrivateHeaders(claim.response, true);
-        idempotency = {
-          key: parsedKey.data,
-          requestHash,
-          claimToken: claim.claimToken,
-          claimedAt,
-        };
-        mutationSeed = await digest(`${owner.did}\n${scope}\n${parsedKey.data}\n${requestHash}`);
-      }
-    } catch (error) {
-      if (error instanceof RequestFailure) {
-        return problem(error.status, error.title, error.detail, url.pathname);
-      }
-      return problem(
-        502,
-        "Upstream operation failed",
-        "The operation could not be completed.",
-        url.pathname,
-      );
-    }
-
-    let response: Response;
-    try {
-      response = await route({
-        request,
-        raw,
-        match,
-        ownerId: owner.did,
-        dependencies,
-        timestamp: idempotency?.claimedAt ?? now(),
-        mutationSeed,
-        mutationClaimToken: idempotency?.claimToken ?? "",
-        idempotencySelector: idempotency
-          ? { scope: `${request.method} ${url.pathname}`, key: idempotency.key }
-          : undefined,
-      });
-    } catch (error) {
-      if (error instanceof RequestFailure) {
-        response = problem(error.status, error.title, error.detail, url.pathname);
-      } else if (error instanceof ContractFailure) {
-        response = problem(
-          502,
-          "Upstream operation failed",
-          "The operation returned invalid data.",
-          url.pathname,
-        );
-      } else if (error instanceof z.ZodError) {
-        response = problem(400, "Invalid request", "The request body is invalid.", url.pathname);
-      } else if (error instanceof Error && /not found/i.test(error.message)) {
-        response = problem(404, "Not found", undefined, url.pathname);
-      } else {
-        response = problem(
+        return problem(
           502,
           "Upstream operation failed",
           "The operation could not be completed.",
           url.pathname,
         );
       }
-    }
 
-    if (idempotency && response.status < 500) {
+      let response: Response;
       try {
-        const completed = await dependencies.repository.completeIdempotency({
+        response = await route({
+          request,
+          raw,
+          match,
           ownerId: owner.did,
-          scope: `${request.method} ${url.pathname}`,
-          key: idempotency.key,
-          requestHash: idempotency.requestHash,
-          claimToken: idempotency.claimToken,
-          response: response.clone(),
-          completedAt: now(),
+          dependencies,
+          timestamp: idempotency?.claimedAt ?? now(),
+          mutationSeed,
+          mutationClaimToken: idempotency?.claimToken ?? "",
+          idempotencySelector: idempotency
+            ? { scope: `${request.method} ${url.pathname}`, key: idempotency.key }
+            : undefined,
         });
-        if (!completed) {
+      } catch (error) {
+        if (error instanceof RequestFailure) {
+          response = problem(error.status, error.title, error.detail, url.pathname);
+        } else if (error instanceof ContractFailure) {
+          response = problem(
+            502,
+            "Upstream operation failed",
+            "The operation returned invalid data.",
+            url.pathname,
+          );
+        } else if (error instanceof z.ZodError) {
+          response = problem(400, "Invalid request", "The request body is invalid.", url.pathname);
+        } else if (error instanceof Error && /not found/i.test(error.message)) {
+          response = problem(404, "Not found", undefined, url.pathname);
+        } else {
+          response = problem(
+            502,
+            "Upstream operation failed",
+            "The operation could not be completed.",
+            url.pathname,
+          );
+        }
+      }
+
+      if (idempotency && response.status < 500) {
+        try {
+          const completed = await dependencies.repository.completeIdempotency({
+            ownerId: owner.did,
+            scope: `${request.method} ${url.pathname}`,
+            key: idempotency.key,
+            requestHash: idempotency.requestHash,
+            claimToken: idempotency.claimToken,
+            response: response.clone(),
+            completedAt: now(),
+          });
+          if (!completed) {
+            return problem(
+              502,
+              "Upstream operation failed",
+              "The request result could not be finalized.",
+              url.pathname,
+            );
+          }
+        } catch {
           return problem(
             502,
             "Upstream operation failed",
@@ -503,16 +528,21 @@ export function createOwnerApiHandler(dependencies: OwnerApiDependencies) {
             url.pathname,
           );
         }
-      } catch {
-        return problem(
-          502,
-          "Upstream operation failed",
-          "The request result could not be finalized.",
-          url.pathname,
-        );
       }
+      return withPrivateHeaders(response);
+    };
+
+    if (request.method === "GET") return execute();
+    try {
+      return await dependencies.withMutation(execute);
+    } catch {
+      return problem(
+        409,
+        "Request interrupted",
+        "A full reset interrupted this operation. Sign in and retry.",
+        url.pathname,
+      );
     }
-    return withPrivateHeaders(response);
   };
 }
 
@@ -568,7 +598,26 @@ async function route(input: {
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    return typedJson(SourceResponseSchema, { source: await repository.saveSource(source) }, 201);
+    const saved = await repository.saveSource(source);
+    return typedJson(
+      SourceResponseSchema,
+      {
+        source: await enqueueInitialSource({
+          repository,
+          source: saved,
+          timestamp,
+          message: SyncSourceMessageSchema.parse({
+            version: 1,
+            kind: "sync_source",
+            ownerId,
+            sourceId: saved.id,
+            workId: `sync:${mutationClaimToken}`,
+          }),
+          enqueue: dependencies.enqueueSource,
+        }),
+      },
+      201,
+    );
   }
 
   if (match.name === "opml" && request.method === "GET") {
@@ -599,10 +648,56 @@ async function route(input: {
       updatedAt: timestamp,
     }));
     const imported = await repository.importSourcesAtomically(ownerId, pending);
+    const messages = imported.inserted.map((source, index) =>
+      SyncSourceMessageSchema.parse({
+        version: 1,
+        kind: "sync_source",
+        ownerId,
+        sourceId: source.id,
+        workId: `sync:${mutationClaimToken}:${index}`,
+      }),
+    );
+    const importedSources: OwnerSource[] = [];
+    if (dependencies.enqueueSources && messages.length > 0) {
+      for (const source of imported.inserted) {
+        importedSources.push(await setInitialSourceStatus(repository, source, timestamp, "queued"));
+      }
+      try {
+        const result = await dependencies.enqueueSources(messages);
+        const failedSourceIds = new Set(result?.failedSourceIds ?? []);
+        for (let index = 0; index < importedSources.length; index += 1) {
+          importedSources[index] = failedSourceIds.has(importedSources[index].id)
+            ? await setInitialSourceStatus(repository, importedSources[index], timestamp, "error")
+            : ((await repository.getSource(ownerId, importedSources[index].id)) ??
+              importedSources[index]);
+        }
+      } catch {
+        for (let index = 0; index < importedSources.length; index += 1) {
+          importedSources[index] = await setInitialSourceStatus(
+            repository,
+            importedSources[index],
+            timestamp,
+            "error",
+          );
+        }
+      }
+    } else {
+      for (let index = 0; index < imported.inserted.length; index += 1) {
+        importedSources.push(
+          await enqueueInitialSource({
+            repository,
+            source: imported.inserted[index],
+            timestamp,
+            message: messages[index],
+            enqueue: dependencies.enqueueSource,
+          }),
+        );
+      }
+    }
     return typedJson(
       OpmlImportResponseSchema,
       {
-        sources: imported.inserted,
+        sources: importedSources,
         rejected: [
           ...parsed.rejected,
           ...imported.duplicates.map((duplicate) => ({
@@ -694,6 +789,13 @@ async function route(input: {
     const preferences = parseJson(raw, OwnerPreferencesSchema);
     return typedJson(PreferencesResponseSchema, {
       preferences: await repository.savePreferences(ownerId, preferences, timestamp),
+    });
+  }
+
+  if (match.name === "learnedPreferences") {
+    const state = await repository.getCurationState(ownerId);
+    return typedJson(LearnedPreferencesResponseSchema, {
+      learnedAdjustments: state.learnedAdjustments,
     });
   }
 
@@ -859,4 +961,43 @@ async function route(input: {
     return withPrivateHeaders(new Response(null, { status: 204 }));
   }
   throw new ContractFailure("Unhandled API route");
+}
+
+async function enqueueInitialSource(input: {
+  repository: ApiRepository;
+  source: OwnerSource;
+  timestamp: string;
+  message: ReturnType<typeof SyncSourceMessageSchema.parse>;
+  enqueue?: (message: ReturnType<typeof SyncSourceMessageSchema.parse>) => Promise<void>;
+}): Promise<OwnerSource> {
+  const queued = await setInitialSourceStatus(
+    input.repository,
+    input.source,
+    input.timestamp,
+    "queued",
+  );
+  try {
+    if (!input.enqueue) throw new Error("Queue unavailable");
+    await input.enqueue(input.message);
+    return (await input.repository.getSource(input.source.ownerId, input.source.id)) ?? queued;
+  } catch {
+    return setInitialSourceStatus(input.repository, queued, input.timestamp, "error");
+  }
+}
+
+async function setInitialSourceStatus(
+  repository: ApiRepository,
+  source: OwnerSource,
+  timestamp: string,
+  status: "queued" | "error",
+): Promise<OwnerSource> {
+  const updated = await repository.setSourceStatus(source.ownerId, source.id, {
+    status,
+    ...(status === "error"
+      ? { lastError: "Initial synchronization could not be queued. Retry this source." }
+      : {}),
+    updatedAt: timestamp,
+  });
+  if (!updated) throw new ContractFailure("Source disappeared while setting queue status");
+  return updated;
 }

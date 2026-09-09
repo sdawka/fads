@@ -1,13 +1,12 @@
 :root {
-  --paper: oklch(97.7% 0.008 91);
-  --surface: oklch(99.4% 0.003 91);
-  --ink: oklch(21% 0.018 66);
-  --muted: oklch(48% 0.014 67);
-  --ember: oklch(49% 0.105 28);
-  --ember-bright: oklch(62% 0.13 30);
-  --shell: #08090d;
+  --paper: var(--background);
+  --surface: var(--card);
+  --ink: var(--foreground);
+  --ember: var(--primary);
+  --ember-bright: var(--primary);
+  --shell: var(--foreground);
   --line: color-mix(in oklch, var(--ink) 16%, transparent);
-  --display: "Iowan Old Style", Charter, "Bitstream Charter", Georgia, serif;
+  --display: var(--font-display);
   --body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --utility: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -137,7 +136,7 @@ a {
 
 .loading {
   margin: auto;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.72rem;
   letter-spacing: 0.08em;
@@ -178,7 +177,7 @@ a {
 .signin-copy > p:not(.eyebrow, .notice) {
   max-width: 38rem;
   margin: 2rem 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   line-height: 1.65;
 }
 .notice {
@@ -246,7 +245,7 @@ a {
 .app-masthead nav a {
   min-height: 2.75rem;
   align-content: center;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.7rem;
   text-decoration: none;
@@ -259,7 +258,7 @@ a {
 }
 .private-mark {
   justify-self: end;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.62rem;
   letter-spacing: 0.08em;
@@ -289,7 +288,7 @@ a {
   position: absolute;
   top: 1.5rem;
   right: 1.5rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.62rem;
   line-height: 1.45;
@@ -312,7 +311,7 @@ a {
 .management-surface > header > p:last-child,
 .edition-end > p {
   max-width: 36rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
   line-height: 1.65;
 }
 .edition-controls {
@@ -336,7 +335,7 @@ a {
 }
 .edition-controls output,
 .edition-controls small {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.67rem;
 }
@@ -381,7 +380,7 @@ dialog h2 {
   font-weight: 500;
 }
 dialog p:not(.section-number) {
-  color: var(--muted);
+  color: var(--muted-foreground);
   line-height: 1.6;
 }
 .danger-button {
@@ -413,7 +412,7 @@ dialog p:not(.section-number) {
   gap: 1rem;
   border-bottom: 1px solid var(--line);
   padding: 0 clamp(1.3rem, 4vw, 4rem);
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.64rem;
   letter-spacing: 0.08em;
@@ -443,7 +442,7 @@ dialog p:not(.section-number) {
 }
 .published {
   margin: 0 0 1rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.64rem;
   line-height: 1.5;
@@ -464,7 +463,7 @@ dialog p:not(.section-number) {
 }
 .feedback p {
   margin: 0 0 0.75rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.62rem;
   letter-spacing: 0.08em;
@@ -482,7 +481,7 @@ dialog p:not(.section-number) {
   padding: 0.55rem 0.8rem;
   background: transparent;
   cursor: pointer;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.72rem;
 }
 .feedback button.chosen {
@@ -599,7 +598,7 @@ dialog p:not(.section-number) {
   text-align: right;
 }
 .reader-controls > span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.62rem;
 }
@@ -626,7 +625,7 @@ dialog p:not(.section-number) {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   padding: 1rem 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.65rem;
 }
@@ -668,7 +667,7 @@ dialog p:not(.section-number) {
   place-content: center;
   justify-items: center;
   border-bottom: 1px solid var(--line);
-  color: var(--muted);
+  color: var(--muted-foreground);
   text-align: center;
 }
 .empty-note a {
@@ -692,7 +691,7 @@ dialog p:not(.section-number) {
 }
 .keep-list span,
 .keep-list button {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.65rem;
 }
@@ -705,11 +704,11 @@ dialog p:not(.section-number) {
 .keep-list p {
   max-width: 60ch;
   margin: 0 0 0.4rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
   line-height: 1.45;
 }
 .keep-list small {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.65rem;
 }
@@ -789,7 +788,7 @@ dialog p:not(.section-number) {
 }
 .source-list small,
 .source-list span {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.62rem;
 }
@@ -833,7 +832,7 @@ dialog p:not(.section-number) {
 }
 .suggestion-list small {
   margin-top: 0.25rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.68rem;
 }
 .learned {
@@ -855,7 +854,7 @@ dialog p:not(.section-number) {
   align-items: center;
   gap: 0.5rem;
   margin: 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--utility);
   font-size: 0.62rem;
 }
@@ -879,7 +878,7 @@ dialog p:not(.section-number) {
 }
 .settings-list p {
   max-width: 38rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
   line-height: 1.55;
 }
 .settings-list fieldset {

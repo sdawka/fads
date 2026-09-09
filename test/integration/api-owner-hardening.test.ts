@@ -20,8 +20,9 @@ describe("owner API with D1", () => {
   function handler(repository: D1OwnerDataRepository) {
     return createOwnerApiHandler({
       ownerDid: OWNER,
-      authenticate: async () => ({ did: OWNER }),
+      authenticate: async () => ({ did: OWNER, expiresAt: "2026-09-04T12:00:00.000Z" }),
       logout: async () => new Response(null, { status: 204 }),
+      withMutation: (operation) => operation(),
       repository,
       editions: {
         create: async () => ({ selected: [] }),

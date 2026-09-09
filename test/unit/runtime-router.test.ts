@@ -7,7 +7,9 @@ function createHarness(authenticated = true) {
     jwks: vi.fn(() => ({ keys: [{ kty: "EC", x: "public" }] })),
     start: vi.fn(async () => Response.redirect("https://pds.example/authorize", 302)),
     callback: vi.fn(async () => Response.redirect("https://fads.cc/", 302)),
-    inspect: vi.fn(async () => (authenticated ? { did: "did:plc:owner" } : undefined)),
+    inspect: vi.fn(async () =>
+      authenticated ? { did: "did:plc:owner", expiresAt: "2026-09-15T12:00:00.000Z" } : undefined,
+    ),
     logout: vi.fn(async () => new Response(null, { status: 204 })),
   };
   const api = vi.fn(async (_request: Request, owner: { did: string }) =>
@@ -58,6 +60,18 @@ describe("runtime route boundary", () => {
     await expect(response?.json()).resolves.toEqual({ authenticated: false });
   });
 
+  it("reports the stored absolute session expiry for a signed-in owner", async () => {
+    const { route } = createHarness(true);
+
+    const response = await route(new Request("https://fads.cc/api/v1/session"));
+
+    await expect(response?.json()).resolves.toEqual({
+      authenticated: true,
+      did: "did:plc:owner",
+      expiresAt: "2026-09-15T12:00:00.000Z",
+    });
+  });
+
   it("rejects private API traffic before invoking the API handler", async () => {
     const { api, route } = createHarness(false);
 
@@ -75,7 +89,10 @@ describe("runtime route boundary", () => {
 
     const response = await route(request);
 
-    expect(api).toHaveBeenCalledWith(request, { did: "did:plc:owner" });
+    expect(api).toHaveBeenCalledWith(request, {
+      did: "did:plc:owner",
+      expiresAt: "2026-09-15T12:00:00.000Z",
+    });
     expect(response?.headers.get("cache-control")).toBe("private, no-store");
     await expect(response?.json()).resolves.toEqual({ owner: "did:plc:owner" });
   });
@@ -87,7 +104,10 @@ describe("runtime route boundary", () => {
     const response = await route(request);
 
     expect(response?.status).toBe(200);
-    expect(api).toHaveBeenCalledWith(request, { did: "did:plc:owner" });
+    expect(api).toHaveBeenCalledWith(request, {
+      did: "did:plc:owner",
+      expiresAt: "2026-09-15T12:00:00.000Z",
+    });
     expect(auth.logout).not.toHaveBeenCalled();
   });
 

@@ -184,8 +184,11 @@ export type SyncSourceMessage = z.infer<typeof SyncSourceMessageSchema>;
 
 export const SessionResponseSchema = z.union([
   z.object({ authenticated: z.literal(false) }).strict(),
-  z.object({ authenticated: z.literal(true), did: IdSchema }).strict(),
+  z.object({ authenticated: z.literal(true), did: IdSchema, expiresAt: TimestampSchema }).strict(),
 ]);
+export const LearnedPreferencesResponseSchema = z
+  .object({ learnedAdjustments: z.record(z.string(), z.number()) })
+  .strict();
 export const SourcesResponseSchema = z.object({ sources: z.array(SourceSchema) }).strict();
 export const SourceResponseSchema = z.object({ source: SourceSchema }).strict();
 export const InterestsResponseSchema = z

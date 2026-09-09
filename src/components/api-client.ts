@@ -5,6 +5,7 @@ import {
   InterestsResponseSchema,
   InteractionResponseSchema,
   KeepResponseSchema,
+  LearnedPreferencesResponseSchema,
   KeepsResponseSchema,
   OpmlImportResponseSchema,
   OwnerExportSchema,
@@ -18,7 +19,7 @@ import {
   SuggestionResponseSchema,
   SuggestionsResponseSchema,
 } from "../contracts";
-import { isValidActiveEditionResponse } from "../modules/offline";
+import { clearOfflineState, isValidActiveEditionResponse } from "../modules/offline";
 import { z } from "zod";
 import type { ActiveEditionView, FadsUiClient, FeedbackKind } from "./models";
 
@@ -49,19 +50,23 @@ function idempotencyKey(): string {
   return globalThis.crypto?.randomUUID?.() ?? `ui-${Date.now()}-${Math.random()}`;
 }
 
-function assertOk(response: Response): Response {
+async function assertOk(response: Response): Promise<Response> {
   if (!response.ok) {
+    if (response.status === 401) {
+      await clearOfflineState().catch(() => undefined);
+      if (typeof window !== "undefined") window.dispatchEvent(new Event("fads:session-expired"));
+    }
     throw new Error(response.status === 401 ? "Your session expired." : "The request failed.");
   }
   return response;
 }
 
 async function readJson(response: Response): Promise<unknown> {
-  return assertOk(response).json();
+  return (await assertOk(response)).json();
 }
 
-function readNoContent(response: Response): void {
-  assertOk(response);
+async function readNoContent(response: Response): Promise<void> {
+  await assertOk(response);
 }
 
 function parse<T>(value: unknown, schema: z.ZodType<T>, message: string): T {
@@ -151,7 +156,7 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
       return parse(value, KeepResponseSchema, "Invalid keep response.").keep;
     },
     async removeKeep(contentId: string) {
-      readNoContent(await mutate(paths.keep(contentId), undefined, "DELETE"));
+      await readNoContent(await mutate(paths.keep(contentId), undefined, "DELETE"));
     },
     async listSources() {
       const value = await readJson(await get(paths.sources));
@@ -163,7 +168,7 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
       return parse(value, SourceResponseSchema, "Invalid source response.").source;
     },
     async removeSource(sourceId: string) {
-      readNoContent(await mutate(paths.source(sourceId), undefined, "DELETE"));
+      await readNoContent(await mutate(paths.source(sourceId), undefined, "DELETE"));
     },
     async refreshSource(sourceId: string) {
       const value = await readJson(await mutate(paths.sourceRefresh(sourceId), {}));
@@ -181,7 +186,7 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
       return parse(value, OpmlImportResponseSchema, "Invalid OPML response.");
     },
     async exportOpml() {
-      const response = assertOk(await get(paths.opml));
+      const response = await assertOk(await get(paths.opml));
       const value = await response.text();
       if (!value.trim() || value.length > 2 * 1024 * 1024)
         throw new Error("Invalid OPML response.");
@@ -191,12 +196,19 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
       const value = await readJson(await get(paths.interests));
       return parse(value, InterestsResponseSchema, "Invalid interests response.").interests;
     },
+    async listLearnedPreferences() {
+      return parse(
+        await readJson(await get("/api/v1/profile/learned")),
+        LearnedPreferencesResponseSchema,
+        "Invalid learned preferences response.",
+      ).learnedAdjustments;
+    },
     async addInterest(value: string) {
       const response = await readJson(await mutate(paths.interests, { value }));
       return parse(response, InterestResponseSchema, "Invalid interest response.").interest;
     },
     async removeInterest(interestId: string) {
-      readNoContent(await mutate(paths.interest(interestId), undefined, "DELETE"));
+      await readNoContent(await mutate(paths.interest(interestId), undefined, "DELETE"));
     },
     async listSuggestions() {
       const value = await readJson(await get(paths.suggestions));
@@ -224,7 +236,7 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
       );
     },
     async reset(full = false) {
-      readNoContent(
+      await readNoContent(
         await mutate(
           paths.reset,
           full ? { full: true, confirmation: "DELETE ALL PRIVATE DATA" } : { full: false },
@@ -232,7 +244,7 @@ export function createBrowserUiClient(fetcher: typeof fetch = globalThis.fetch):
       );
     },
     async logout() {
-      readNoContent(await mutate(paths.logout, undefined));
+      await readNoContent(await mutate(paths.logout, undefined));
     },
   };
 }

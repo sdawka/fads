@@ -1,5 +1,8 @@
 index.html
 public/concept/index.html
+site/public/concept/index.html
+dist-site
+.astro-site
 src/worker-configuration.d.ts
 node_modules
 dist

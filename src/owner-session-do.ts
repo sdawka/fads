@@ -28,8 +28,38 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
       this.ctx.storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS oauth_start_rate (name TEXT PRIMARY KEY, window_started_at INTEGER NOT NULL, count INTEGER NOT NULL)",
       );
+      this.ctx.storage.sql.exec(
+        "CREATE TABLE IF NOT EXISTS auth_generation (name TEXT PRIMARY KEY, generation INTEGER NOT NULL)",
+      );
+      this.ctx.storage.sql.exec(
+        "INSERT OR IGNORE INTO auth_generation (name, generation) VALUES ('owner', 1)",
+      );
       return Promise.resolve();
     });
+  }
+
+  getAuthGeneration(): Promise<number> {
+    return Promise.resolve(this.authGeneration());
+  }
+
+  resetAuthentication(): Promise<number> {
+    const generation = this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec(
+        "UPDATE auth_generation SET generation = generation + 1 WHERE name = 'owner'",
+      );
+      for (const table of [
+        "session_events",
+        "oauth_states",
+        "oauth_sessions",
+        "app_sessions",
+        "refresh_locks",
+        "oauth_start_rate",
+      ]) {
+        this.ctx.storage.sql.exec(`DELETE FROM ${table}`);
+      }
+      return this.authGeneration();
+    });
+    return Promise.resolve(generation);
   }
 
   record(event: string): Promise<void> {
@@ -37,7 +67,8 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
     return Promise.resolve();
   }
 
-  putOAuthState(input: { key: string; value: unknown }): Promise<void> {
+  putOAuthState(input: { key: string; value: unknown; generation?: number }): Promise<boolean> {
+    if (!this.matchesAuthGeneration(input.generation)) return Promise.resolve(false);
     const value = JSON.stringify(input.value);
     const expiresAt = getExpiresAt(input.value, Date.now() + 10 * 60_000);
     this.ctx.storage.sql.exec(
@@ -51,10 +82,11 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
       "DELETE FROM oauth_states WHERE key IN (SELECT key FROM oauth_states ORDER BY expires_at DESC, key DESC LIMIT -1 OFFSET ?)",
       OAUTH_STATE_LIMIT,
     );
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
-  tryStartOAuth(input: { now: number }): Promise<boolean> {
+  tryStartOAuth(input: { now: number; generation?: number }): Promise<boolean> {
+    if (!this.matchesAuthGeneration(input.generation)) return Promise.resolve(false);
     const row = Array.from(
       this.ctx.storage.sql.exec<{ window_started_at: number; count: number }>(
         "SELECT window_started_at, count FROM oauth_start_rate WHERE name = 'start'",
@@ -89,13 +121,14 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
     return Promise.resolve();
   }
 
-  putOAuthSession(input: { did: string; value: unknown }): Promise<void> {
+  putOAuthSession(input: { did: string; value: unknown; generation?: number }): Promise<boolean> {
+    if (!this.matchesAuthGeneration(input.generation)) return Promise.resolve(false);
     this.ctx.storage.sql.exec(
       "INSERT OR REPLACE INTO oauth_sessions (did, value) VALUES (?, ?)",
       input.did,
       JSON.stringify(input.value),
     );
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
   getOAuthSession(input: { did: string }): Promise<unknown> {
@@ -118,7 +151,9 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
     did: string;
     idleExpiresAt: number;
     absoluteExpiresAt: number;
-  }): Promise<void> {
+    generation?: number;
+  }): Promise<boolean> {
+    if (!this.matchesAuthGeneration(input.generation)) return Promise.resolve(false);
     this.ctx.storage.sql.exec(
       "INSERT OR REPLACE INTO app_sessions (token_hash, did, idle_expires_at, absolute_expires_at) VALUES (?, ?, ?, ?)",
       input.tokenHash,
@@ -126,10 +161,13 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
       input.idleExpiresAt,
       input.absoluteExpiresAt,
     );
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
-  readAppSession(input: { tokenHash: string; now: number }): Promise<{ did: string } | undefined> {
+  readAppSession(input: {
+    tokenHash: string;
+    now: number;
+  }): Promise<{ did: string; absoluteExpiresAt: number; generation: number } | undefined> {
     const row = Array.from(
       this.ctx.storage.sql.exec<{
         did: string;
@@ -145,10 +183,20 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
       this.ctx.storage.sql.exec("DELETE FROM app_sessions WHERE token_hash = ?", input.tokenHash);
       return Promise.resolve(undefined);
     }
-    return Promise.resolve({ did: row.did });
+    return Promise.resolve({
+      did: row.did,
+      absoluteExpiresAt: row.absolute_expires_at,
+      generation: this.authGeneration(),
+    });
   }
 
-  touchAppSession(input: { tokenHash: string; now: number; idleExpiresAt: number }): Promise<void> {
+  touchAppSession(input: {
+    tokenHash: string;
+    now: number;
+    idleExpiresAt: number;
+    generation?: number;
+  }): Promise<boolean> {
+    if (!this.matchesAuthGeneration(input.generation)) return Promise.resolve(false);
     this.ctx.storage.sql.exec(
       "UPDATE app_sessions SET idle_expires_at = MIN(?, absolute_expires_at) WHERE token_hash = ? AND idle_expires_at > ? AND absolute_expires_at > ?",
       input.idleExpiresAt,
@@ -156,7 +204,15 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
       input.now,
       input.now,
     );
-    return Promise.resolve();
+    const retained = Array.from(
+      this.ctx.storage.sql.exec<{ present: number }>(
+        "SELECT 1 AS present FROM app_sessions WHERE token_hash = ? AND idle_expires_at > ? AND absolute_expires_at > ?",
+        input.tokenHash,
+        input.now,
+        input.now,
+      ),
+    )[0];
+    return Promise.resolve(Boolean(retained));
   }
 
   deleteAppSession(input: { tokenHash: string }): Promise<void> {
@@ -169,7 +225,13 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
     return Promise.resolve();
   }
 
-  tryAcquireRefreshLock(input: { name: string; holder: string; now: number }): Promise<boolean> {
+  tryAcquireRefreshLock(input: {
+    name: string;
+    holder: string;
+    now: number;
+    generation?: number;
+  }): Promise<boolean> {
+    if (!this.matchesAuthGeneration(input.generation)) return Promise.resolve(false);
     this.ctx.storage.sql.exec("DELETE FROM refresh_locks WHERE expires_at <= ?", input.now);
     const existing = Array.from(
       this.ctx.storage.sql.exec<{ holder: string }>(
@@ -187,7 +249,13 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
     return Promise.resolve(true);
   }
 
-  renewRefreshLock(input: { name: string; holder: string; now: number }): Promise<boolean> {
+  renewRefreshLock(input: {
+    name: string;
+    holder: string;
+    now: number;
+    generation?: number;
+  }): Promise<boolean> {
+    if (!this.matchesAuthGeneration(input.generation)) return Promise.resolve(false);
     const lease = Array.from(
       this.ctx.storage.sql.exec<{ holder: string; expires_at: number }>(
         "SELECT holder, expires_at FROM refresh_locks WHERE name = ?",
@@ -212,6 +280,16 @@ export class OwnerSessionDO extends DurableObject<AppEnv> {
       input.holder,
     );
     return Promise.resolve();
+  }
+
+  private authGeneration(): number {
+    return this.ctx.storage.sql
+      .exec<{ generation: number }>("SELECT generation FROM auth_generation WHERE name = 'owner'")
+      .one().generation;
+  }
+
+  private matchesAuthGeneration(generation: number | undefined): boolean {
+    return generation === undefined || generation === this.authGeneration();
   }
 }
 

@@ -218,8 +218,9 @@ function repository(): ApiRepository {
 function dependencies(overrides: Partial<OwnerApiDependencies> = {}): OwnerApiDependencies {
   return {
     ownerDid: OWNER,
-    authenticate: async () => ({ did: OWNER }),
+    authenticate: async () => ({ did: OWNER, expiresAt: "2026-09-04T12:00:00.000Z" }),
     logout: async () => new Response(null, { status: 204 }),
+    withMutation: (operation) => operation(),
     repository: repository(),
     editions: {
       create: async () => ({ edition: undefined, selected: [] }),
@@ -229,6 +230,7 @@ function dependencies(overrides: Partial<OwnerApiDependencies> = {}): OwnerApiDe
     },
     now: () => AT,
     id: () => "rss:one",
+    enqueueSource: async () => undefined,
     ...overrides,
   };
 }
@@ -321,13 +323,150 @@ describe("owner API contracts", () => {
 describe("owner API router", () => {
   it("requires the configured owner before touching private state", async () => {
     const handler = createOwnerApiHandler(
-      dependencies({ authenticate: async () => ({ did: "did:plc:someone-else" }) }),
+      dependencies({
+        authenticate: async () => ({
+          did: "did:plc:someone-else",
+          expiresAt: "2026-09-04T12:00:00.000Z",
+        }),
+      }),
     );
     const response = await handler(new Request("https://fads.cc/api/v1/sources"));
 
     expect(response.status).toBe(403);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("content-type")).toContain("application/problem+json");
+  });
+
+  it("returns the authenticated session's stored absolute expiry", async () => {
+    const handler = createOwnerApiHandler(dependencies());
+
+    const response = await handler(new Request("https://fads.cc/api/v1/session"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      authenticated: true,
+      did: OWNER,
+      expiresAt: "2026-09-04T12:00:00.000Z",
+    });
+  });
+
+  it("queues an initial RSS sync and returns its truthful queued status", async () => {
+    const queued: Array<{ sourceId: string; workId: string }> = [];
+    const handler = createOwnerApiHandler(
+      dependencies({ enqueueSource: async (message) => void queued.push(message) }),
+    );
+
+    const response = await handler(
+      new Request("https://fads.cc/api/v1/sources", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "initial-rss" },
+        body: JSON.stringify({
+          adapter: "rss",
+          displayName: "One",
+          url: "https://example.com/feed.xml",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { source: OwnerSource };
+    expect(body.source.status).toBe("queued");
+    expect(queued).toMatchObject([
+      { sourceId: body.source.id, workId: expect.stringMatching(/^sync:[0-9a-f-]+$/) },
+    ]);
+  });
+
+  it("does not overwrite a first sync that becomes ready during enqueue", async () => {
+    const repo = repository();
+    const handler = createOwnerApiHandler(
+      dependencies({
+        repository: repo,
+        enqueueSource: async (message) => {
+          await repo.setSourceStatus(OWNER, message.sourceId, {
+            status: "ready",
+            lastSyncedAt: AT,
+            updatedAt: AT,
+          });
+        },
+      }),
+    );
+
+    const response = await handler(
+      new Request("https://fads.cc/api/v1/sources", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "fast-initial-rss" },
+        body: JSON.stringify({
+          adapter: "rss",
+          displayName: "One",
+          url: "https://example.com/feed.xml",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect((await response.json()) as object).toMatchObject({ source: { status: "ready" } });
+  });
+
+  it("keeps a failed initial RSS enqueue visible and retryable", async () => {
+    let attempts = 0;
+    const repo = repository();
+    const handler = createOwnerApiHandler(
+      dependencies({
+        repository: repo,
+        enqueueSource: async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("queue unavailable");
+        },
+      }),
+    );
+    const created = await handler(
+      new Request("https://fads.cc/api/v1/sources", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "failed-initial-rss" },
+        body: JSON.stringify({
+          adapter: "rss",
+          displayName: "One",
+          url: "https://example.com/feed.xml",
+        }),
+      }),
+    );
+    const createdBody = (await created.json()) as { source: OwnerSource };
+
+    expect(created.status).toBe(201);
+    expect(createdBody.source).toMatchObject({
+      status: "error",
+      lastError: "Initial synchronization could not be queued. Retry this source.",
+    });
+
+    const retried = await handler(
+      new Request(
+        `https://fads.cc/api/v1/sources/${encodeURIComponent(createdBody.source.id)}/refresh`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", "idempotency-key": "retry-rss" },
+          body: "{}",
+        },
+      ),
+    );
+    expect(retried.status).toBe(202);
+    expect((await retried.json()) as object).toMatchObject({ source: { status: "queued" } });
+  });
+
+  it("exposes current owner-scoped learned adjustments", async () => {
+    const repo = repository();
+    repo.getCurationState = async () => ({
+      learnedAdjustments: { "source:rss:one": 3, "tag:systems": -1 },
+      notNow: [],
+      recentlyShown: [],
+    });
+    const handler = createOwnerApiHandler(dependencies({ repository: repo }));
+
+    const response = await handler(new Request("https://fads.cc/api/v1/profile/learned"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      learnedAdjustments: { "source:rss:one": 3, "tag:systems": -1 },
+    });
   });
 
   it("returns owner-scoped sources with private no-store headers", async () => {
@@ -404,6 +543,71 @@ describe("owner API router", () => {
     expect(response.headers.get("set-cookie")).toBe("fads_session=; Path=/; Max-Age=0");
   });
 
+  it("serializes an already-authorized mutation ahead of a full reset", async () => {
+    const repo = repository();
+    const saveSource = repo.saveSource;
+    let saveStarted!: () => void;
+    let continueSave!: () => void;
+    const started = new Promise<void>((resolve) => {
+      saveStarted = resolve;
+    });
+    const continuation = new Promise<void>((resolve) => {
+      continueSave = resolve;
+    });
+    repo.saveSource = async (item) => {
+      saveStarted();
+      await continuation;
+      return saveSource(item);
+    };
+    repo.resetOwnerData = async (ownerId) => {
+      for (const item of await repo.listSources(ownerId)) {
+        await repo.removeSource(ownerId, item.id);
+      }
+    };
+    let tail = Promise.resolve();
+    const withMutation = async <T>(operation: () => Promise<T>): Promise<T> => {
+      const previous = tail;
+      let release!: () => void;
+      tail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      try {
+        return await operation();
+      } finally {
+        release();
+      }
+    };
+    const handler = createOwnerApiHandler(dependencies({ repository: repo, withMutation }));
+    const sourceRequest = handler(
+      new Request("https://fads.cc/api/v1/sources", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "before-reset" },
+        body: JSON.stringify({
+          adapter: "rss",
+          displayName: "One",
+          url: "https://example.com/feed.xml",
+        }),
+      }),
+    );
+    await started;
+    const resetRequest = handler(
+      new Request("https://fads.cc/api/v1/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "after-mutation" },
+        body: JSON.stringify({ full: true, confirmation: "DELETE ALL PRIVATE DATA" }),
+      }),
+    );
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    continueSave();
+    const [created, reset] = await Promise.all([sourceRequest, resetRequest]);
+
+    expect(created.status).toBe(201);
+    expect(reset.status).toBe(204);
+    await expect(repo.listSources(OWNER)).resolves.toEqual([]);
+  });
+
   it("replays an idempotent source mutation and rejects key reuse with another body", async () => {
     const handler = createOwnerApiHandler(dependencies());
     const request = (displayName: string) =>
@@ -445,10 +649,11 @@ describe("owner API router", () => {
 
   it("claims concurrent mutations before running the domain operation", async () => {
     const repo = repository();
+    const saveSource = repo.saveSource;
     let saves = 0;
     repo.saveSource = async (item) => {
       saves += 1;
-      return item;
+      return saveSource(item);
     };
     const handler = createOwnerApiHandler(dependencies({ repository: repo }));
     const request = () =>
@@ -809,9 +1014,20 @@ describe("owner API router", () => {
     let atomicImports = 0;
     repo.importSourcesAtomically = async (_ownerId, input) => {
       atomicImports += 1;
+      for (const item of input) await repo.saveSource(item);
       return { inserted: [...input], duplicates: [] };
     };
-    const handler = createOwnerApiHandler(dependencies({ repository: repo }));
+    let queuedBeforeBatch = false;
+    const handler = createOwnerApiHandler(
+      dependencies({
+        repository: repo,
+        enqueueSources: async () => {
+          queuedBeforeBatch = (await repo.listSources(OWNER)).every(
+            (item) => item.status === "queued",
+          );
+        },
+      }),
+    );
     const opml = await handler(
       new Request("https://fads.cc/api/v1/sources/opml", {
         method: "POST",
@@ -823,10 +1039,61 @@ describe("owner API router", () => {
     );
     expect(opml.status).toBe(201);
     expect(atomicImports).toBe(1);
+    expect(queuedBeforeBatch).toBe(true);
+    expect((await opml.clone().json()) as object).toMatchObject({
+      sources: [{ status: "queued" }],
+    });
 
     repo.exportOwnerData = async () => ({ ...validExport(), data: {} }) as never;
     const invalidExport = await handler(new Request("https://fads.cc/api/v1/export"));
     expect(invalidExport.status).toBe(502);
+  });
+
+  it("marks only the unsent OPML sources as failed after a partial batch enqueue", async () => {
+    const repo = repository();
+    repo.importSourcesAtomically = async (_ownerId, input) => {
+      for (const item of input) await repo.saveSource(item);
+      return { inserted: [...input], duplicates: [] };
+    };
+    const handler = createOwnerApiHandler(
+      dependencies({
+        repository: repo,
+        enqueueSources: async (messages) => {
+          const accepted = messages[0];
+          await repo.setSourceStatus(OWNER, accepted.sourceId, {
+            status: "ready",
+            lastSyncedAt: AT,
+            updatedAt: AT,
+          });
+          return { failedSourceIds: messages.slice(1).map((message) => message.sourceId) };
+        },
+      }),
+    );
+
+    const response = await handler(
+      new Request("https://fads.cc/api/v1/sources/opml", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "opml-partial-enqueue",
+        },
+        body: JSON.stringify({
+          opml: '<?xml version="1.0"?><opml version="2.0"><body><outline text="One" type="rss" xmlUrl="https://example.com/one.xml" /><outline text="Two" type="rss" xmlUrl="https://example.com/two.xml" /></body></opml>',
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect((await response.json()) as { sources: OwnerSource[] }).toMatchObject({
+      sources: [
+        { displayName: "One", status: "ready" },
+        {
+          displayName: "Two",
+          status: "error",
+          lastError: "Initial synchronization could not be queued. Retry this source.",
+        },
+      ],
+    });
   });
 
   it("returns bounded OPML rejections when an outline has no URL", async () => {

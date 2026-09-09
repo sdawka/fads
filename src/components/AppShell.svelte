@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
 
   import type { ContentEnvelope, KeepRecord, OwnerExport } from "../contracts";
   import {
     clearOfflineState,
     createIndexedDbOutbox,
     getOfflineEdition,
+    getOfflineSession,
     getOfflineStatus,
     registerOfflineServiceWorker,
     replayOfflineMutations,
+    setOfflineSession,
   } from "../modules/offline";
   import { discardFailedChanges, resetFailedChangesForRetry } from "./offline-resolution";
   import { createBrowserUiClient } from "./api-client";
@@ -19,6 +21,7 @@
     Surface,
   } from "./models";
   import { describeControlValue, describeDecisionFactor, moveReader } from "./reading";
+  import Reader from "./reader/Reader.svelte";
   import SafeBlocks from "./SafeBlocks.svelte";
 
   export let activeSurface: Surface = "edition";
@@ -37,6 +40,7 @@
   let keptContent: ContentEnvelope[] = [];
   let manualInterests: Awaited<ReturnType<FadsUiClient["listInterests"]>> = [];
   let suggestions: Awaited<ReturnType<FadsUiClient["listSuggestions"]>> = [];
+  let learnedPreferences: Record<string, number> = {};
   let rssSources: Awaited<ReturnType<FadsUiClient["listSources"]>> = [];
   let preferences = { blockedLabels: [] as string[], mutedSourceIds: [] as string[] };
   let rssUrl = "";
@@ -56,6 +60,12 @@
   let resetConfirmButton: HTMLButtonElement;
   let offlineFailureDialog: HTMLDialogElement;
   let offlineDiscardButton: HTMLButtonElement;
+  let sourceRemovalDialog: HTMLDialogElement;
+  let sourcePendingRemoval: (typeof rssSources)[number] | undefined;
+  let sessionExpiryTimer: number | undefined;
+  let onlineListener: (() => void) | undefined;
+  let sessionExpiredListener: (() => void) | undefined;
+  let sessionGeneration = 0;
 
   let offlineRegistrationPromise: Promise<ServiceWorkerRegistration | undefined> | undefined;
   function ensureOfflineRegistration() {
@@ -77,6 +87,37 @@
   $: item = frame ? edition?.content.find((candidate) => candidate.id === frame?.contentId) : undefined;
   $: title = item?.blocks.find((block) => block.kind === "heading")?.text ?? "Untitled";
   $: atprotoSource = rssSources.find((source) => source.adapter === "atproto");
+  $: readerSourceName = createSourceResolver(rssSources);
+  let sourcePollTimer: ReturnType<typeof setTimeout> | undefined;
+  let sourcePollActive = false;
+  let destroyed = false;
+  $: scheduleSourceStatus(session, rssSources);
+
+  function scheduleSourceStatus(currentSession: typeof session, sources: typeof rssSources) {
+    if (typeof window === "undefined" || destroyed) return;
+    if (currentSession !== "authenticated" || activeSurface !== "sources" || !sources.some((source) => ["queued", "syncing"].includes(source.status))) {
+      if (sourcePollTimer) clearTimeout(sourcePollTimer);
+      sourcePollTimer = undefined;
+      return;
+    }
+    if (sourcePollTimer || sourcePollActive) return;
+    sourcePollTimer = setTimeout(async () => {
+      sourcePollTimer = undefined;
+      if (!client || destroyed || session !== "authenticated") return;
+      sourcePollActive = true;
+      const snapshot = rssSources;
+      const generation = sessionGeneration;
+      try {
+        const updated = await client.listSources();
+        if (!destroyed && session === "authenticated" && sessionGeneration === generation && rssSources === snapshot) rssSources = updated;
+      } catch {
+        // Keep the last known status; another bounded poll can recover a transient failure.
+      } finally {
+        sourcePollActive = false;
+        scheduleSourceStatus(session, rssSources);
+      }
+    }, 2_000);
+  }
 
   async function refreshOfflineQueueStatus(): Promise<void> {
     try {
@@ -89,86 +130,188 @@
     }
   }
 
+  function clearVisibleSession(message = "") {
+    sessionGeneration += 1;
+    if (sessionExpiryTimer !== undefined) window.clearTimeout(sessionExpiryTimer);
+    sessionExpiryTimer = undefined;
+    session = "signed-out";
+    ownerDid = "";
+    edition = undefined;
+    atEnd = false;
+    keeps = [];
+    keptContent = [];
+    manualInterests = [];
+    suggestions = [];
+    learnedPreferences = {};
+    rssSources = [];
+    preferences = { blockedLabels: [], mutedSourceIds: [] };
+    sourcePendingRemoval = undefined;
+    managementLoading = false;
+    surfaceLoadState = "idle";
+    surfaceLoadError = "";
+    offlinePending = 0;
+    offlineFailed = 0;
+    statusMessage = "";
+    loadError = message;
+  }
+
+  async function expireVisibleSession(message = "Your session expired.") {
+    clearVisibleSession(message);
+    await clearOfflineState(offlineRegistration).catch(() => undefined);
+  }
+
+  function scheduleSessionExpiry(expiresAt: string) {
+    if (sessionExpiryTimer !== undefined) window.clearTimeout(sessionExpiryTimer);
+    const deadline = Date.parse(expiresAt);
+    const remaining = deadline - Date.now();
+    if (!Number.isFinite(deadline) || remaining <= 0) {
+      void expireVisibleSession();
+      return;
+    }
+    sessionExpiryTimer = window.setTimeout(() => void expireVisibleSession(), remaining);
+  }
+
   onMount(async () => {
     offlineRegistration = await ensureOfflineRegistration();
     offlineState = offlineRegistration ? "ready" : "unavailable";
-    await refreshOfflineQueueStatus();
+    onlineListener = () => {
+      window.setTimeout(() => void refreshOfflineQueueStatus(), 500);
+    };
+    sessionExpiredListener = () => void expireVisibleSession();
+    window.addEventListener("online", onlineListener);
+    window.addEventListener("fads:session-expired", sessionExpiredListener);
     const uiClient = client ?? createBrowserUiClient();
     client = uiClient;
+    const startupGeneration = sessionGeneration;
     try {
       const inspected = await uiClient.session();
-      session = inspected.authenticated ? "authenticated" : "signed-out";
-      ownerDid = inspected.did ?? "";
-      if (session === "authenticated" && activeSurface === "edition") {
-        edition = await uiClient.activeEdition();
+      if (!inspected.authenticated) {
+        clearVisibleSession();
+        await clearOfflineState(offlineRegistration).catch(() => undefined);
+        return;
+      }
+      if (!inspected.did || !inspected.expiresAt) throw new Error("Invalid session response.");
+      session = "authenticated";
+      ownerDid = inspected.did;
+      try {
+        await setOfflineSession(
+          { did: inspected.did, expiresAt: inspected.expiresAt },
+          offlineRegistration,
+        );
+      } catch {
+        offlineState = "unavailable";
+      }
+      scheduleSessionExpiry(inspected.expiresAt);
+      await refreshOfflineQueueStatus();
+      if (sessionGeneration !== startupGeneration || session !== "authenticated") return;
+      if (activeSurface === "edition") {
+        const loadedEdition = await uiClient.activeEdition();
+        if (sessionGeneration !== startupGeneration || session !== "authenticated") return;
+        edition = loadedEdition;
         atEnd = edition?.completed ?? false;
         const [sourceResult, keepResult] = await Promise.allSettled([
           uiClient.listSources(),
           uiClient.listKeeps(),
         ]);
+        if (sessionGeneration !== startupGeneration || session !== "authenticated") return;
         if (sourceResult.status === "fulfilled") rssSources = sourceResult.value;
         if (keepResult.status === "fulfilled") {
           keeps = keepResult.value.keeps;
           keptContent = keepResult.value.content;
         }
-      } else if (session === "authenticated") {
-        await loadSurface(uiClient);
+      } else {
+        await loadSurface(uiClient, startupGeneration);
       }
     } catch (error) {
-      const cached =
+      if (sessionGeneration !== startupGeneration) return;
+      if (error instanceof Error && error.message === "Your session expired.") {
+        await expireVisibleSession(error.message);
+        return;
+      }
+      const [cached, storedSession] = await Promise.all([
         activeSurface === "edition"
-          ? await getOfflineEdition<ActiveEditionView>().catch(() => undefined)
-          : undefined;
-      if (cached) {
+          ? getOfflineEdition<ActiveEditionView>().catch(() => undefined)
+          : Promise.resolve(undefined),
+        getOfflineSession().catch(() => undefined),
+      ]);
+      if (sessionGeneration !== startupGeneration) return;
+      if (cached && storedSession) {
         session = "authenticated";
+        ownerDid = storedSession.did;
         edition = cached;
         atEnd = cached.completed;
+        scheduleSessionExpiry(storedSession.expiresAt);
+        await refreshOfflineQueueStatus();
+        if (sessionGeneration !== startupGeneration || session !== "authenticated") return;
         statusMessage = "Offline edition resumed. Changes will sync when you reconnect.";
       } else {
-        session = "signed-out";
-        loadError =
-          error instanceof Error && error.message === "Your session expired."
-            ? error.message
-            : "The private API could not be reached, and no offline edition is available.";
+        clearVisibleSession(
+          "The private API could not be reached, and no offline edition is available.",
+        );
       }
     }
-    window.addEventListener("online", () => {
-      window.setTimeout(() => void refreshOfflineQueueStatus(), 500);
-    });
   });
 
-  async function loadSurface(uiClient: FadsUiClient) {
+  onDestroy(() => {
+    destroyed = true;
+    sessionGeneration += 1;
+    if (sourcePollTimer) clearTimeout(sourcePollTimer);
+    if (sessionExpiryTimer !== undefined) window.clearTimeout(sessionExpiryTimer);
+    if (onlineListener) window.removeEventListener("online", onlineListener);
+    if (sessionExpiredListener)
+      window.removeEventListener("fads:session-expired", sessionExpiredListener);
+  });
+
+  async function loadSurface(uiClient: FadsUiClient, expectedGeneration = sessionGeneration) {
     managementLoading = true;
     surfaceLoadState = "loading";
     surfaceLoadError = "";
     try {
       if (activeSurface === "keeps") {
         const library = await uiClient.listKeeps();
+        if (sessionGeneration !== expectedGeneration || session !== "authenticated") return;
         keeps = library.keeps;
         keptContent = library.content;
       }
       if (activeSurface === "sources") {
-        [rssSources, preferences] = await Promise.all([
+        const [loadedSources, loadedPreferences] = await Promise.all([
           uiClient.listSources(),
           uiClient.getPreferences(),
         ]);
+        if (sessionGeneration !== expectedGeneration || session !== "authenticated") return;
+        rssSources = loadedSources;
+        preferences = loadedPreferences;
       }
       if (activeSurface === "garden") {
-        [manualInterests, suggestions] = await Promise.all([
+        const [loadedInterests, loadedSuggestions, loadedPreferences, loadedSources] =
+          await Promise.all([
           uiClient.listInterests(),
           uiClient.listSuggestions(),
-        ]);
+          uiClient.listLearnedPreferences(),
+          uiClient.listSources(),
+          ]);
+        if (sessionGeneration !== expectedGeneration || session !== "authenticated") return;
+        manualInterests = loadedInterests;
+        suggestions = loadedSuggestions;
+        learnedPreferences = loadedPreferences;
+        rssSources = loadedSources;
       }
-      if (activeSurface === "settings") preferences = await uiClient.getPreferences();
+      if (activeSurface === "settings") {
+        const loadedPreferences = await uiClient.getPreferences();
+        if (sessionGeneration !== expectedGeneration || session !== "authenticated") return;
+        preferences = loadedPreferences;
+      }
+      if (sessionGeneration !== expectedGeneration || session !== "authenticated") return;
       surfaceLoadState = "ready";
     } catch (error) {
+      if (sessionGeneration !== expectedGeneration) return;
       const surfaceName = activeSurface[0].toUpperCase() + activeSurface.slice(1);
       const detail = error instanceof Error ? error.message : "The private API could not be reached.";
       surfaceLoadState = "error";
       surfaceLoadError = `${surfaceName} could not be loaded. ${detail}`;
       statusMessage = surfaceLoadError;
     } finally {
-      managementLoading = false;
+      if (sessionGeneration === expectedGeneration) managementLoading = false;
     }
   }
 
@@ -243,6 +386,51 @@
         keptContent = keptContent.filter((content) => content.id !== item.id);
       }
       statusMessage = error instanceof Error ? error.message : "Feedback will be sent when online.";
+    }
+  }
+
+  async function setReaderPosition(nextPosition: number) {
+    if (!edition || !client) return;
+    const previousPosition = edition.position;
+    edition = { ...edition, position: nextPosition };
+    try {
+      await client.setProgress(edition.edition.id, nextPosition);
+      await refreshOfflineQueueStatus();
+    } catch (error) {
+      edition = { ...edition, position: previousPosition };
+      throw error;
+    }
+  }
+
+  async function completeReaderEdition() {
+    if (!edition || !client) return;
+    try {
+      await client.complete(edition.edition.id);
+      atEnd = true;
+      edition = { ...edition, completed: true };
+      statusMessage = "Edition complete.";
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async function readerFeedback(kind: FeedbackKind, contentId: string, sourceId: string) {
+    if (!edition || !client) return;
+    const content = edition.content.find((candidate) => candidate.id === contentId);
+    const wasKept = keeps.some((keep) => keep.contentId === contentId);
+    if (kind === "keep" && content && !wasKept) {
+      keeps = [{ ownerId: "", contentId, keptAt: new Date().toISOString() }, ...keeps];
+      keptContent = [content, ...keptContent.filter((candidate) => candidate.id !== contentId)];
+    }
+    try {
+      await client.interact({ editionId: edition.edition.id, contentId, sourceId, kind });
+      await refreshOfflineQueueStatus();
+    } catch (error) {
+      if (kind === "keep" && !wasKept) {
+        keeps = keeps.filter((keep) => keep.contentId !== contentId);
+        keptContent = keptContent.filter((content) => content.id !== contentId);
+      }
+      throw error;
     }
   }
 
@@ -341,6 +529,19 @@
       rssSources = previous;
       statusMessage = error instanceof Error ? error.message : "The source could not be removed.";
     }
+  }
+
+  function askToRemoveSource(source: (typeof rssSources)[number]) {
+    sourcePendingRemoval = source;
+    sourceRemovalDialog.showModal();
+  }
+
+  async function confirmSourceRemoval() {
+    if (!sourcePendingRemoval) return;
+    const sourceId = sourcePendingRemoval.id;
+    sourcePendingRemoval = undefined;
+    sourceRemovalDialog.close();
+    await removeSource(sourceId);
   }
 
   async function refreshSource(sourceId: string) {
@@ -519,15 +720,11 @@
     ]);
     const remoteError = remoteResult.status === "rejected" ? remoteResult.reason : undefined;
     if (localResult.status === "fulfilled") {
-      session = "signed-out";
-      ownerDid = "";
-      edition = undefined;
-      keeps = [];
-      keptContent = [];
-      statusMessage = "";
-      loadError = remoteError
+      clearVisibleSession(
+        remoteError
         ? "Private offline data was cleared, but server sign-out could not be confirmed. Reconnect and sign out again to end the server session."
-        : "";
+          : "",
+      );
     } else {
       statusMessage = remoteError
         ? "Server sign-out and local private-data clearing both failed. Try again before leaving this device."
@@ -576,6 +773,21 @@
       // Fall through to a truthful generic label.
     }
     return "Unknown source";
+  }
+
+  function createSourceResolver(sources: typeof rssSources) {
+    const snapshot = [...sources];
+    return (sourceId: string) => sourceDisplayName(sourceId, snapshot);
+  }
+
+  function learnedPreferenceDescription(key: string, adjustment: number): string {
+    const direction = adjustment > 0 ? "more" : "less";
+    const [kind, ...value] = key.split(":");
+    const detail = value.join(":");
+    if (kind === "source") return `${sourceDisplayName(detail, rssSources)} has been showing up ${direction} often.`;
+    if (kind === "tag") return `${detail || "This topic"} has been showing up ${direction} often.`;
+    if (kind === "format") return `${detail || "This format"} has been showing up ${direction} often.`;
+    return "Your reactions are adjusting what appears in later editions.";
   }
 </script>
 
@@ -631,7 +843,8 @@
             <div class="start-copy">
               <p class="eyebrow">MAKE AN EDITION</p>
               <h1 id="edition-start-title">How should today’s reading feel?</h1>
-              <p>Set the shape. The edition will stop after twelve items, often sooner.</p>
+              <p>{rssSources.length ? "Set the shape. The edition will stop after twelve items, often sooner." : "Add a source first, then make a finite edition from what you allow."}</p>
+              {#if rssSources.length === 0}<a href="/sources/">Choose sources</a>{/if}
             </div>
             <form class="edition-controls" on:submit|preventDefault={makeEdition}>
               <label for="curiosity">
@@ -659,61 +872,22 @@
             </div>
           </section>
         {:else if item && frame}
-          <section class="reading-frame" aria-labelledby="article-title">
-            <article class="reading-canvas">
-              <header class="article-meta">
-                <div><span>{formatOf(item)}</span><span>{sourceDisplayName(item.sourceId, rssSources, item.canonicalUri)}</span></div>
-                <p><span>{position + 1} of {total}</span><progress value={position + 1} max={total}>Item {position + 1} of {total}</progress></p>
-              </header>
-              <div class="article-body">
-                <p class="published">{formatDate(item.publishedAt)} · {frame.frame}</p>
-                <h1 id="article-title">{title}</h1>
-                <SafeBlocks blocks={item.blocks} media={item.media} skipFirstHeading={true} />
-              </div>
-              <div class="feedback" aria-label="Tune this kind of recommendation">
-                <p>Teach the next edition</p>
-                <div>
-                  <button type="button" on:click={() => react("more_like_this")}>More like this</button>
-                  <button type="button" on:click={() => react("less_like_this")}>Less like this</button>
-                  <button type="button" on:click={() => react("good_surprise")}>Good surprise</button>
-                  <button type="button" on:click={() => react("not_now")}>Not now</button>
-                  <button type="button" on:click={() => react("mute_source")}>Mute source</button>
-                  <button class:chosen={keeps.some((keep) => keep.contentId === item.id)} aria-pressed={keeps.some((keep) => keep.contentId === item.id)} type="button" on:click={() => react("keep")}>Keep</button>
-                </div>
-              </div>
-            </article>
-
-            <aside class:expanded={traceExpanded} class="trace-rail" aria-label="Why this item was selected">
-              <button class="trace-toggle" type="button" aria-expanded={traceExpanded} on:click={() => traceExpanded = !traceExpanded}>Why this item?</button>
-              <div class="trace-content">
-                <p class="rail-label">DECISION TRACE</p>
-                <p class="trace-intro">Visible ingredients, not a verdict.</p>
-                <ol>
-                  {#each frame.decisionTrace.factors as factor, index}
-                    <li>
-                      <span class="factor-number">{String(index + 1).padStart(2, "0")}</span>
-                      <div><strong>{factor.factor}</strong><span>{describeDecisionFactor(factor)}</span></div>
-                    </li>
-                  {/each}
-                </ol>
-                <dl>
-                  <div><dt>Curiosity</dt><dd>{edition.edition.curiosity}</dd></div>
-                  <div><dt>Energy</dt><dd>{edition.edition.energy}</dd></div>
-                  <div><dt>Source</dt><dd>{sourceDisplayName(item.sourceId, rssSources, item.canonicalUri)}</dd></div>
-                </dl>
-              </div>
-            </aside>
-
-            <nav class="reader-controls" aria-label="Edition controls">
-              <button type="button" on:click={() => move("previous")} disabled={position === 0} aria-label="Previous item"><span aria-hidden="true">←</span> Previous</button>
-              <span>{position + 1} / {total}</span>
-              <button class="next" type="button" on:click={() => move("next")} aria-label={position === total - 1 ? "Finish edition" : "Next item"}>
-                {position === total - 1 ? "Finish edition" : "Next"} <span aria-hidden="true">→</span>
-              </button>
-            </nav>
-          </section>
+          <Reader
+            view={edition}
+            keptIds={keeps.map((keep) => keep.contentId)}
+            onPosition={setReaderPosition}
+            onComplete={completeReaderEdition}
+            onFeedback={readerFeedback}
+            onKeep={(contentId) => readerFeedback("keep", contentId, edition?.content.find((content) => content.id === contentId)?.sourceId ?? "")}
+            sourceName={readerSourceName}
+          />
         {:else}
-          <section class="empty-state"><h1>This edition has no eligible items.</h1><p>Check source mutes and allowance labels, then make another edition.</p><a href="/settings/">Review allowances</a></section>
+          <section class="empty-state"><h1>This edition has no eligible items.</h1>
+            <p>{rssSources.length ? "Check that your sources have finished syncing, or review your allowances." : "Add your first source and let it sync before making an edition."}</p>
+            <a href="/sources/">{rssSources.length ? "Check sources" : "Choose sources"}</a>
+            {#if rssSources.length}<a href="/settings/">Review allowances</a>{/if}
+            <button class="button quiet" type="button" on:click={() => { edition = undefined; }}>Set another edition</button>
+          </section>
         {/if}
       {:else if activeSurface === "keeps"}
         <section class="library-surface" aria-labelledby="keeps-title">
@@ -736,7 +910,7 @@
             <section aria-labelledby="atproto-title"><p class="section-number">01 · SOCIAL</p><h2 id="atproto-title">ATProto</h2><p class="connection"><span aria-hidden="true">●</span> Signed in{ownerDid ? ` as ${ownerDid}` : ""}</p><p class="muted-note">Source sync uses the configured owner’s ATProto OAuth session.</p>{#if atprotoSource}<button class="button quiet" type="button" on:click={() => refreshSource(atprotoSource.id)}>Refresh home feed</button>{:else}<button class="button primary" type="button" disabled={atprotoAdding} on:click={addAtprotoHomeFeed}>Add ATProto home feed</button>{/if}</section>
             <section aria-labelledby="rss-title"><p class="section-number">02 · PUBLICATIONS</p><h2 id="rss-title">RSS</h2><form on:submit|preventDefault={addSource}><label for="rss-url">Feed URL</label><div class="inline-field"><input id="rss-url" type="url" required placeholder="https://example.com/feed.xml" bind:value={rssUrl} /><button class="button primary" type="submit">Add source</button></div></form><div class="row-actions"><label class="button quiet" for="opml-file">Import OPML</label><input class="visually-hidden" id="opml-file" type="file" accept=".opml,.xml,text/xml" on:change={importOpmlFile} /><button class="text-button" type="button" on:click={async () => { if (!client) return; try { const opml = await client.exportOpml(); const blob = new Blob([opml], { type: "text/x-opml" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "fads-sources.opml"; anchor.click(); URL.revokeObjectURL(url); statusMessage = "OPML exported."; } catch (error) { statusMessage = error instanceof Error ? error.message : "OPML export failed."; } }}>Export OPML</button></div></section>
           </div>
-          {#if rssSources.length}<ul class="source-list">{#each rssSources as source}<li><div><strong>{source.displayName}</strong><small>{source.url ?? "ATProto"}</small></div><span>{source.status === "error" ? source.lastError : source.status}</span><button type="button" on:click={() => refreshSource(source.id)}>Refresh</button><button type="button" on:click={() => toggleSourceMute(source.id)}>{preferences.mutedSourceIds.includes(source.id) ? "Unmute" : "Mute"}</button><button type="button" on:click={() => removeSource(source.id)}>Remove</button></li>{/each}</ul>{:else if !managementLoading}<p class="empty-note">No sources yet. Add an ATProto home feed, RSS URL, or OPML file.</p>{/if}
+          {#if rssSources.length}<ul class="source-list">{#each rssSources as source}<li><div><strong>{source.displayName}</strong><small>{source.url ?? "ATProto"}</small><small>{source.lastSyncedAt ? `Last synced ${formatDate(source.lastSyncedAt)}` : "Waiting for first sync"}</small></div><span>{source.status === "error" ? source.lastError : source.status === "queued" ? "Refresh pending" : source.status}</span><button type="button" on:click={() => refreshSource(source.id)}>Refresh</button><button type="button" on:click={() => toggleSourceMute(source.id)}>{preferences.mutedSourceIds.includes(source.id) ? "Unmute" : "Mute"}</button><button type="button" on:click={() => askToRemoveSource(source)}>Remove</button></li>{/each}</ul>{:else if !managementLoading}<p class="empty-note">No sources yet. Add an ATProto home feed, RSS URL, or OPML file.</p>{/if}
           {/if}
         </section>
       {:else if activeSurface === "garden"}
@@ -747,7 +921,7 @@
             <section aria-labelledby="manual-title"><p class="section-number">ROOTED</p><h2 id="manual-title">Your interests</h2><ul class="tag-list">{#each manualInterests as interest}<li><span>{interest.value}</span><button type="button" aria-label={`Remove ${interest.value}`} on:click={() => removeInterest(interest.id)}>×</button></li>{/each}</ul><form class="inline-field" on:submit|preventDefault={addInterest}><label class="visually-hidden" for="interest">New interest</label><input id="interest" name="interest" required placeholder="Add an interest" /><button class="button primary" type="submit">Add</button></form></section>
             <section aria-labelledby="suggestions-title"><p class="section-number">WAITING FOR YOU</p><h2 id="suggestions-title">Suggestions</h2>{#if suggestions.length}<ul class="suggestion-list">{#each suggestions as suggestion}<li><span><strong>{suggestion.value}</strong><small>Seen across {suggestion.evidenceCount} allowed sources</small></span><button type="button" aria-label={`Confirm ${suggestion.value}`} on:click={() => decideSuggestion(suggestion, "confirm")}>Confirm</button><button type="button" aria-label={`Reject ${suggestion.value}`} on:click={() => decideSuggestion(suggestion, "reject")}>Dismiss</button></li>{/each}</ul>{:else}<p>Every suggestion has been decided.</p>{/if}</section>
           </div>
-          <section class="learned" aria-labelledby="learned-title"><p class="section-number">DIRECTIONAL, NOT DEFINING</p><h2 id="learned-title">What your actions are changing</h2><p>Your edition reactions adjust future ranking. The exact stored adjustments are included in your private export; a live inspection view is not available yet.</p></section>
+          <section class="learned" aria-labelledby="learned-title"><p class="section-number">DIRECTIONAL, NOT DEFINING</p><h2 id="learned-title">What your actions are changing</h2>{#if Object.keys(learnedPreferences).length}<ul>{#each Object.entries(learnedPreferences) as [key, adjustment]}<li>{learnedPreferenceDescription(key, adjustment)}</li>{/each}</ul>{:else}<p>Your reactions will shape a later edition after you use its feedback controls.</p>{/if}</section>
           {/if}
         </section>
       {:else}
@@ -755,7 +929,7 @@
           <header><p class="eyebrow">BOUNDARIES &amp; PORTABILITY</p><h1 id="settings-title">Settings</h1><p>The guardrails stay explicit. Your private data stays portable.</p></header>
           <div class="settings-list">
             <section><div><p class="section-number">ALLOWANCES</p><h2>Content labels</h2><p>Exact source labels are hard gates, never ranking hints.</p></div>{#if surfaceLoadState === "loading"}<p role="status">Loading your allowances…</p>{:else if surfaceLoadState === "error"}<p class="notice" role="alert">{surfaceLoadError}</p>{:else}<div><ul class="tag-list" aria-label="Blocked content labels">{#each preferences.blockedLabels as label}<li><span>{label}</span><button type="button" disabled={preferencesSaving} aria-label={`Allow ${label}`} on:click={() => removeBlockedLabel(label)}>×</button></li>{/each}</ul>{#if preferences.blockedLabels.length === 0}<p>No content labels are blocked.</p>{/if}<form class="inline-field" on:submit={addBlockedLabel}><label class="visually-hidden" for="blocked-label">Label to block</label><input id="blocked-label" maxlength="120" required placeholder="Exact label, e.g. graphic-media" bind:value={blockedLabelDraft} /><button class="button quiet" type="submit" disabled={preferencesSaving}>Block label</button></form></div>{/if}</section>
-            <section><div><p class="section-number">OFFLINE</p><h2>Active edition only</h2><p>The shell and current edition can resume offline. OAuth, exports, and source data never enter the cache.</p></div><div><p class="connection"><span aria-hidden="true">●</span> {offlineState === "ready" ? "Offline cache active" : offlineState === "checking" ? "Checking offline cache" : "Offline cache unavailable"}</p>{#if offlinePending > 0}<p>{offlinePending} change{offlinePending === 1 ? " is" : "s are"} waiting to sync.</p>{/if}{#if offlineFailed > 0}<p class="notice" role="alert">{offlineFailed} offline change{offlineFailed === 1 ? " needs" : "s need"} attention after the server rejected it.</p><div class="row-actions"><button class="button quiet" type="button" disabled={offlineResolving} on:click={retryFailedOfflineChanges}>Retry failed changes</button><button class="text-button danger" type="button" disabled={offlineResolving} on:click={askToDiscardFailedChanges}>Discard failed changes…</button></div>{/if}</div></section>
+            <section><div><p class="section-number">OFFLINE</p><h2>Active edition only</h2><p>The shell and current edition can resume offline. OAuth, exports, and source data never enter the cache. The current edition and pending changes remain only until the original sign-in expires, for at most 7 days. Confirmed sign-out or full reset clears them immediately.</p></div><div><p class="connection"><span aria-hidden="true">●</span> {offlineState === "ready" ? "Offline cache active" : offlineState === "checking" ? "Checking offline cache" : "Offline cache unavailable"}</p>{#if offlinePending > 0}<p>{offlinePending} change{offlinePending === 1 ? " is" : "s are"} waiting to sync.</p>{/if}{#if offlineFailed > 0}<p class="notice" role="alert">{offlineFailed} offline change{offlineFailed === 1 ? " needs" : "s need"} attention after the server rejected it.</p><div class="row-actions"><button class="button quiet" type="button" disabled={offlineResolving} on:click={retryFailedOfflineChanges}>Retry failed changes</button><button class="text-button danger" type="button" disabled={offlineResolving} on:click={askToDiscardFailedChanges}>Discard failed changes…</button></div>{/if}</div></section>
             <section><div><p class="section-number">PORTABILITY</p><h2>Your private data</h2><p>Download a validated JSON copy whenever you want.</p></div><button class="button quiet" type="button" on:click={downloadExport}>Export my data</button></section>
             <section class="danger-zone"><div><p class="section-number">RESET</p><h2>Start over carefully</h2><p>Reset learned taste while keeping manual interests, or explicitly erase everything.</p></div><div class="row-actions"><button class="button quiet" type="button" on:click={resetLearnedTaste}>Reset learned taste</button><button class="text-button danger" type="button" on:click={askForFullReset}>Full reset…</button></div></section>
             <section><div><p class="section-number">SESSION</p><h2>Leave this device</h2></div><button class="button primary" type="button" on:click={signOut}>Sign out</button></section>
@@ -780,6 +954,11 @@
         <button class="button quiet" type="button" on:click={() => offlineFailureDialog.close()}>Cancel</button>
         <button bind:this={offlineDiscardButton} class="button danger-button" type="button" disabled={offlineResolving} on:click={discardFailedOfflineChanges}>Discard failed changes</button>
       </div>
+    </dialog>
+    <dialog bind:this={sourceRemovalDialog} aria-labelledby="source-removal-title">
+      <h2 id="source-removal-title">Remove {sourcePendingRemoval?.displayName ?? "this source"}?</h2>
+      <p>Future editions will no longer use this source.</p>
+      <div class="row-actions"><button class="button quiet" type="button" on:click={() => sourceRemovalDialog.close()}>Cancel</button><button class="button danger-button" type="button" on:click={confirmSourceRemoval}>Remove source</button></div>
     </dialog>
   </div>
 {/if}
