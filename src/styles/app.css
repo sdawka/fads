@@ -7,7 +7,7 @@
   --shell: var(--foreground);
   --line: color-mix(in oklch, var(--ink) 16%, transparent);
   --display: var(--font-display);
-  --body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --body: var(--font-body);
   --utility: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -52,7 +52,7 @@ a {
   left: 0.5rem;
   translate: 0 -150%;
   background: var(--shell);
-  color: white;
+  color: oklch(1 0 0);
   padding: 0.75rem 1rem;
 }
 .skip-link:focus {
@@ -131,7 +131,7 @@ a {
   text-underline-offset: 0.25em;
 }
 .text-button.danger {
-  color: #982d2a;
+  color: oklch(0.46049 0.143067 26.111);
 }
 
 .loading {
@@ -158,7 +158,7 @@ a {
   margin: 0 auto;
   border: 1px solid var(--line);
   background: var(--surface);
-  box-shadow: 0 1.25rem 4rem rgb(8 9 13 / 14%);
+  box-shadow: 0 1.25rem 4rem oklch(0.140529 0.009016 273.174 / 14%);
 }
 .signin-copy {
   display: grid;
@@ -212,7 +212,7 @@ a {
   display: grid;
   grid-template-columns: 2rem 1fr;
   gap: 0.5rem;
-  border-top: 1px solid rgb(255 255 255 / 16%);
+  border-top: 1px solid oklch(1 0 0 / 16%);
   padding-top: 0.75rem;
   font-family: var(--display);
   font-size: 1.12rem;
@@ -264,7 +264,7 @@ a {
   letter-spacing: 0.08em;
 }
 .private-mark span {
-  color: #4c7754;
+  color: oklch(0.527583 0.072749 149.269);
 }
 .reader-main {
   padding: clamp(0.8rem, 2.3vw, 2rem);
@@ -282,7 +282,7 @@ a {
   border: 1px solid var(--line);
   padding: clamp(2rem, 8vw, 7rem);
   background: var(--surface);
-  box-shadow: 0 1rem 3.8rem rgb(8 9 13 / 10%);
+  box-shadow: 0 1rem 3.8rem oklch(0.140529 0.009016 273.174 / 10%);
 }
 .issue-mark {
   position: absolute;
@@ -368,10 +368,10 @@ dialog {
   background: var(--surface);
   padding: clamp(1.4rem, 4vw, 2.5rem);
   color: var(--ink);
-  box-shadow: 0 2rem 7rem rgb(8 9 13 / 35%);
+  box-shadow: 0 2rem 7rem oklch(0.140529 0.009016 273.174 / 35%);
 }
 dialog::backdrop {
-  background: rgb(8 9 13 / 62%);
+  background: oklch(0.140529 0.009016 273.174 / 62%);
 }
 dialog h2 {
   margin: 0.35rem 0 0.8rem;
@@ -384,9 +384,9 @@ dialog p:not(.section-number) {
   line-height: 1.6;
 }
 .danger-button {
-  border-color: #7a1f1f;
-  background: #7a1f1f;
-  color: white;
+  border-color: oklch(0.38874 0.125476 25.191);
+  background: oklch(0.38874 0.125476 25.191);
+  color: oklch(1 0 0);
 }
 
 .reading-frame {
@@ -397,7 +397,7 @@ dialog p:not(.section-number) {
   margin: 0 auto;
   border: 1px solid var(--line);
   background: var(--surface);
-  box-shadow: 0 1.2rem 4rem rgb(8 9 13 / 11%);
+  box-shadow: 0 1.2rem 4rem oklch(0.140529 0.009016 273.174 / 11%);
 }
 .reading-canvas {
   display: grid;
@@ -525,7 +525,7 @@ dialog p:not(.section-number) {
   display: grid;
   grid-template-columns: 2rem 1fr;
   gap: 0.5rem;
-  border-top: 1px solid rgb(255 255 255 / 15%);
+  border-top: 1px solid oklch(1 0 0 / 15%);
   padding-top: 0.75rem;
 }
 .factor-number {
@@ -552,7 +552,7 @@ dialog p:not(.section-number) {
   display: grid;
   gap: 0.5rem;
   margin: 0;
-  border-top: 1px solid rgb(255 255 255 / 15%);
+  border-top: 1px solid oklch(1 0 0 / 15%);
   padding-top: 1rem;
 }
 .trace-content dl div {
@@ -579,7 +579,7 @@ dialog p:not(.section-number) {
   align-items: center;
   border: 1px solid var(--line);
   background: color-mix(in oklch, var(--surface) 94%, transparent);
-  box-shadow: 0 0.8rem 2rem rgb(8 9 13 / 13%);
+  box-shadow: 0 0.8rem 2rem oklch(0.140529 0.009016 273.174 / 13%);
   backdrop-filter: blur(12px);
 }
 .reader-controls button {
@@ -748,7 +748,7 @@ dialog p:not(.section-number) {
   letter-spacing: -0.04em;
 }
 .connection {
-  color: #456e4e;
+  color: oklch(0.498439 0.068732 150.263);
   font-family: var(--utility);
   font-size: 0.7rem;
 }
@@ -933,7 +933,7 @@ dialog p:not(.section-number) {
     min-height: 3.4rem;
     align-items: center;
     border: 0;
-    border-bottom: 1px solid rgb(255 255 255 / 15%);
+    border-bottom: 1px solid oklch(1 0 0 / 15%);
     padding: 0 1.3rem;
     background: var(--shell);
     color: var(--paper);

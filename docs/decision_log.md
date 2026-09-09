@@ -11,3 +11,5 @@
 - 2026-09-08T21:49:49-04:00 — Merge the completed work, deploy the public landing page to fads.cc, and verify it live.
 
 - 2026-09-08T22:22:19-04:00 — Preserve the first two landing-page sections; explain the remaining page for newcomers who may know ATProto, using SVGs and diagrams.
+
+- 2026-09-08T22:36:57-04:00 — Use OKLCH colors and update normal text with inspiration from the Signage typography preset in compsys.
