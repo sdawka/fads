@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+const sessionExpiresAt = new Date(Date.now() + 86_400_000).toISOString();
 const observedAt = "2026-08-28T14:00:00.000Z";
 const provenance = { source: "rss:field-notes", observedAt, reference: "https://example.com/post" };
 const fieldNotesSource = {
@@ -30,8 +31,8 @@ const activeEdition = {
         position: 0,
         decisionTrace: {
           factors: [
-            { factor: "Manual interest · urban ecology", weight: 0.72, provenance },
-            { factor: "Curiosity detour", weight: 0.21, provenance },
+            { factor: "interest:urban ecology", weight: 0.72, provenance },
+            { factor: "exploration", weight: 0.21, provenance },
           ],
           generatedAt: observedAt,
         },
@@ -42,7 +43,7 @@ const activeEdition = {
         frame: "A lighter finish from a trusted source.",
         position: 1,
         decisionTrace: {
-          factors: [{ factor: "Energy fit", weight: 0.61, provenance }],
+          factors: [{ factor: "energy-fit", weight: 0.61, provenance }],
           generatedAt: observedAt,
         },
       },
@@ -104,7 +105,9 @@ const activeEdition = {
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/session", (route) =>
-    route.fulfill({ json: { authenticated: true, did: "did:plc:owner" } }),
+    route.fulfill({
+      json: { authenticated: true, did: "did:plc:owner", expiresAt: sessionExpiresAt },
+    }),
   );
   await page.route("**/api/v1/editions/active", (route) => route.fulfill({ json: activeEdition }));
   await page.route("**/api/v1/sources", (route) =>
@@ -176,7 +179,8 @@ test("reads exactly one safe item at a time and ends deliberately", async ({ pag
 
   await expect(page.getByRole("heading", { name: "The city is a garden" })).toBeVisible();
   await expect(page.getByText("1 of 2", { exact: true })).toBeVisible();
-  await expect(page.getByText("Manual interest · urban ecology")).toBeVisible();
+  await page.getByText("Why this item?", { exact: true }).click();
+  await expect(page.getByText("Matches your interest in urban ecology.")).toBeVisible();
   await expect(page.locator("main script")).toHaveCount(0);
   await expect(page.getByText("<script>window.__unsafe = true</script>")).toBeVisible();
   await expect(
@@ -218,12 +222,72 @@ test("reads exactly one safe item at a time and ends deliberately", async ({ pag
   await expect(page.getByRole("button", { name: "Keep reading" })).toHaveCount(0);
 });
 
+test("returns from an edition overview to the selected item without changing its order", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "List", exact: true }).click();
+  await expect(page.getByRole("button", { name: "The city is a garden" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "An atlas of small attention" })).toBeVisible();
+
+  await page.getByRole("button", { name: "An atlas of small attention" }).click();
+  await expect(page.getByRole("heading", { name: "An atlas of small attention" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Back to list" })).toBeVisible();
+  await expect(page.getByText("2 of 2", { exact: true })).toBeVisible();
+});
+
+test("shows a completed edition as a terminal reader state", async ({ page }) => {
+  await page.route("**/api/v1/editions/active", (route) =>
+    route.fulfill({ json: { ...activeEdition, completed: true } }),
+  );
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "That’s the edition." })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Next item" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Finish edition" })).toHaveCount(0);
+});
+
+test("requires confirmation before removing a source", async ({ page }) => {
+  let deleteCount = 0;
+  await page.route("**/api/v1/preferences", (route) =>
+    route.fulfill({ json: { preferences: { blockedLabels: [], mutedSourceIds: [] } } }),
+  );
+  await page.route("**/api/v1/sources/rss%3Afield-notes", async (route) => {
+    deleteCount += 1;
+    await route.fulfill({ status: 204 });
+  });
+  await page.goto("/sources/");
+  await page.getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByRole("dialog", { name: "Remove Field Notes?" })).toBeVisible();
+  expect(deleteCount).toBe(0);
+  await page.getByRole("button", { name: "Remove source" }).click();
+  await expect.poll(() => deleteCount).toBe(1);
+});
+
+test("explains learned preferences in plain language", async ({ page }) => {
+  await page.route("**/api/v1/interests", (route) => route.fulfill({ json: { interests: [] } }));
+  await page.route("**/api/v1/suggestions", (route) =>
+    route.fulfill({ json: { suggestions: [] } }),
+  );
+  await page.route("**/api/v1/profile/learned", (route) =>
+    route.fulfill({
+      json: { learnedAdjustments: { "source:rss:field-notes": 0.6, "tag:ecology": -0.2 } },
+    }),
+  );
+
+  await page.goto("/garden/");
+
+  await expect(page.getByText("Field Notes has been showing up more often.")).toBeVisible();
+  await expect(page.getByText("Ecology has been showing up less often.")).toBeVisible();
+  await expect(page.getByText("0.6", { exact: true })).toHaveCount(0);
+});
+
 test("resumes the validated active edition when the private API is offline", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "The city is a garden" })).toBeVisible();
 
   await page.evaluate(async (value) => {
-    const cache = await caches.open("fads-edition-v1");
+    const cache = await caches.open("fads-edition-v2");
     await cache.put(
       "/api/v1/editions/active",
       new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } }),
@@ -403,7 +467,7 @@ test("clears private offline state when remote logout cannot be confirmed", asyn
   });
   await page.goto("/settings/");
   await page.evaluate(async () => {
-    const cache = await caches.open("fads-edition-v1");
+    const cache = await caches.open("fads-edition-v2");
     await cache.put(
       "/api/v1/editions/active",
       new Response(JSON.stringify({ private: true }), {
@@ -418,7 +482,7 @@ test("clears private offline state when remote logout cannot be confirmed", asyn
   await expect
     .poll(() =>
       page.evaluate(async () =>
-        Boolean(await (await caches.open("fads-edition-v1")).match("/api/v1/editions/active")),
+        Boolean(await (await caches.open("fads-edition-v2")).match("/api/v1/editions/active")),
       ),
     )
     .toBe(false);
@@ -490,9 +554,55 @@ test("keeps mobile reading controls reachable without hiding the trace", async (
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  await expect(page.getByRole("button", { name: "Why this item?" })).toBeVisible();
+  await expect(page.getByText("Why this item?", { exact: true })).toBeVisible();
   const controls = page.getByLabel("Edition controls");
   await expect(controls).toBeVisible();
   const box = await controls.boundingBox();
   expect(box?.height).toBeGreaterThanOrEqual(48);
+});
+
+test("loads media only on request and offers retry after failure", async ({ page }) => {
+  let requests = 0;
+  await page.route("https://example.com/garden.jpg", async (route) => {
+    requests++;
+    await route.abort("failed");
+  });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "The city is a garden" })).toBeVisible();
+  expect(requests).toBe(0);
+  await page.getByRole("button", { name: "Load image", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Retry image", exact: true })).toBeVisible();
+  expect(requests).toBe(1);
+  await page.getByRole("button", { name: "Retry image", exact: true }).click();
+  await expect.poll(() => requests).toBe(2);
+  await page.getByRole("button", { name: "Next item" }).click();
+  await page.getByRole("button", { name: "Previous item" }).click();
+  await expect(page.getByRole("button", { name: "Load image", exact: true })).toBeVisible();
+  expect(requests).toBe(2);
+});
+
+test("updates first-sync status without queuing another refresh", async ({ page }) => {
+  let reads = 0;
+  await page.route("**/api/v1/preferences", (route) =>
+    route.fulfill({ json: { preferences: { blockedLabels: [], mutedSourceIds: [] } } }),
+  );
+  await page.route("**/api/v1/sources", (route) => {
+    expect(route.request().method()).toBe("GET");
+    reads++;
+    return route.fulfill({
+      json: {
+        sources: [
+          {
+            ...fieldNotesSource,
+            status: reads === 1 ? "queued" : "ready",
+            ...(reads > 1 ? { lastSyncedAt: observedAt } : {}),
+          },
+        ],
+      },
+    });
+  });
+  await page.goto("/sources/");
+  await expect(page.getByText("Refresh pending", { exact: true })).toBeVisible();
+  await expect(page.getByText("ready", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Last synced/)).toBeVisible();
 });

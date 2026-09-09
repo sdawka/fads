@@ -4,6 +4,7 @@ import {
   ACTIVE_EDITION_PATH,
   STATIC_ASSETS,
   isCacheableGet,
+  isUsableOfflineSession,
   isValidActiveEditionResponse,
   shouldUseOfflineFallback,
 } from "../../src/modules/offline/policy";
@@ -115,6 +116,35 @@ describe("offline cache policy", () => {
     expect(
       shouldUseOfflineFallback(
         new Request("https://fads.cc/", { headers: { Accept: "application/json" } }),
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts only a DID-bound session before its absolute expiry", () => {
+    const now = Date.parse("2026-09-08T12:00:00.000Z");
+    expect(
+      isUsableOfflineSession({ did: "did:plc:owner", expiresAt: "2026-09-08T12:00:00.001Z" }, now),
+    ).toBe(true);
+    expect(
+      isUsableOfflineSession({ did: "did:plc:owner", expiresAt: "2026-09-08T12:00:00.000Z" }, now),
+    ).toBe(false);
+    expect(isUsableOfflineSession({ did: "did:plc:owner", expiresAt: "not-a-date" }, now)).toBe(
+      false,
+    );
+    expect(
+      isUsableOfflineSession({ did: "owner", expiresAt: "2026-09-09T12:00:00.000Z" }, now),
+    ).toBe(false);
+    expect(
+      isUsableOfflineSession({ did: "did:", expiresAt: "2026-09-09T12:00:00.000Z" }, now),
+    ).toBe(false);
+    expect(
+      isUsableOfflineSession(
+        {
+          did: "did:plc:owner",
+          expiresAt: "2026-09-09T12:00:00.000Z",
+          renewedAt: "2026-09-08T12:00:00.000Z",
+        },
+        now,
       ),
     ).toBe(false);
   });

@@ -3,6 +3,25 @@ import { EditionResponseSchema } from "../../contracts";
 /** The only personalized response eligible for the offline cache. */
 export const ACTIVE_EDITION_PATH = "/api/v1/editions/active";
 
+export interface OfflineSession {
+  did: string;
+  expiresAt: string;
+}
+
+export function isUsableOfflineSession(value: unknown, now = Date.now()): value is OfflineSession {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const session = value as Record<string, unknown>;
+  if (!hasExactKeys(session, ["did", "expiresAt"])) return false;
+  if (
+    typeof session.did !== "string" ||
+    !/^did:[a-z0-9]+:[A-Za-z0-9._:%-]+(?::[A-Za-z0-9._:%-]+)*$/.test(session.did)
+  )
+    return false;
+  if (typeof session.expiresAt !== "string") return false;
+  const expiresAt = Date.parse(session.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt > now;
+}
+
 /** Keep this list deliberately small: it is the install shell, not a content cache. */
 export const STATIC_ASSETS = Object.freeze([
   "/",

@@ -2,29 +2,17 @@ import type { ClientAssertionPrivateJwk } from "@atcute/oauth-node-client";
 import { z } from "zod";
 
 const DidSchema = z.string().regex(/^did:(?:plc|web):[A-Za-z0-9._:%-]+$/);
-const PrivateJwkSchema = z.discriminatedUnion("kty", [
-  z
-    .object({
-      kty: z.literal("EC"),
-      kid: z.string().trim().min(1),
-      alg: z.enum(["ES256", "ES384", "ES512"]),
-      crv: z.enum(["P-256", "P-384", "P-521"]),
-      x: z.string().min(1),
-      y: z.string().min(1),
-      d: z.string().min(1),
-    })
-    .loose(),
-  z
-    .object({
-      kty: z.literal("RSA"),
-      kid: z.string().trim().min(1),
-      alg: z.enum(["PS256", "PS384", "PS512", "RS256", "RS384", "RS512"]),
-      n: z.string().min(1),
-      e: z.string().min(1),
-      d: z.string().min(1),
-    })
-    .loose(),
-]);
+const PrivateJwkSchema = z
+  .object({
+    kty: z.literal("EC"),
+    kid: z.string().trim().min(1),
+    alg: z.literal("ES256"),
+    crv: z.literal("P-256"),
+    x: z.string().min(1),
+    y: z.string().min(1),
+    d: z.string().min(1),
+  })
+  .loose();
 const PrivateJwksSchema = z.array(PrivateJwkSchema).min(1).max(4);
 const SafetyLabelsSchema = z
   .array(z.string().trim().min(1).max(100))
@@ -70,7 +58,14 @@ function parseHttpsOrigin(value: string | undefined): string {
   try {
     if (!value) throw new TypeError();
     const url = new URL(value);
-    if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash) {
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    ) {
       throw new TypeError();
     }
     return url.origin;

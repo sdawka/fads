@@ -106,6 +106,99 @@ describe("OwnerSessionDO", () => {
     expect(count.count).toBe(0);
   });
 
+  it("atomically clears every authentication artifact during a full reset", async () => {
+    const appEnv = env as unknown as AppEnv;
+    const stub = appEnv.OWNER_SESSION.getByName("owner-full-auth-reset");
+    const generation = await stub.getAuthGeneration();
+    await stub.record("signed-in");
+    await stub.putOAuthState({
+      key: "pending-before-reset",
+      value: { expiresAt: Date.now() + 60_000 },
+      generation,
+    });
+    await stub.putOAuthSession({
+      did: "did:plc:owner123",
+      value: { refresh: "secret" },
+      generation,
+    });
+    await stub.createAppSession({
+      tokenHash: "browser",
+      did: "did:plc:owner123",
+      idleExpiresAt: Date.now() + 60_000,
+      absoluteExpiresAt: Date.now() + 60_000,
+      generation,
+    });
+    await stub.tryAcquireRefreshLock({ name: "refresh", holder: "holder", now: 1, generation });
+    await stub.tryStartOAuth({ now: 1, generation });
+
+    const nextGeneration = await stub.resetAuthentication();
+
+    expect(nextGeneration).toBe(generation + 1);
+    const counts = await runInDurableObject(stub, (_instance, state) =>
+      Object.fromEntries(
+        [
+          "session_events",
+          "oauth_states",
+          "oauth_sessions",
+          "app_sessions",
+          "refresh_locks",
+          "oauth_start_rate",
+        ].map((table) => [
+          table,
+          state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`).one()
+            .count,
+        ]),
+      ),
+    );
+    expect(counts).toEqual({
+      session_events: 0,
+      oauth_states: 0,
+      oauth_sessions: 0,
+      app_sessions: 0,
+      refresh_locks: 0,
+      oauth_start_rate: 0,
+    });
+  });
+
+  it("rejects authentication writes that started before a full reset", async () => {
+    const appEnv = env as unknown as AppEnv;
+    const stub = appEnv.OWNER_SESSION.getByName("owner-reset-generation");
+    const staleGeneration = await stub.getAuthGeneration();
+    await stub.resetAuthentication();
+
+    await expect(
+      stub.putOAuthState({
+        key: "stale-state",
+        value: { expiresAt: Date.now() + 60_000 },
+        generation: staleGeneration,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      stub.putOAuthSession({
+        did: "did:plc:owner123",
+        value: { refresh: "stale" },
+        generation: staleGeneration,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      stub.createAppSession({
+        tokenHash: "stale-browser",
+        did: "did:plc:owner123",
+        idleExpiresAt: Date.now() + 60_000,
+        absoluteExpiresAt: Date.now() + 60_000,
+        generation: staleGeneration,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      stub.tryAcquireRefreshLock({
+        name: "refresh",
+        holder: "stale",
+        now: Date.now(),
+        generation: staleGeneration,
+      }),
+    ).resolves.toBe(false);
+  });
+
   it("retains and renews a refresh lease beyond thirty seconds", async () => {
     const appEnv = env as unknown as AppEnv;
     const stub = appEnv.OWNER_SESSION.getByName("owner-refresh");

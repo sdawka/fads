@@ -16,6 +16,7 @@ export type FeedbackKind =
 export interface SessionView {
   authenticated: boolean;
   did?: string;
+  expiresAt?: string;
 }
 
 export interface ActiveEditionView {
@@ -64,6 +65,7 @@ export interface FadsUiClient {
   ): Promise<{ sources: ApiSource[]; rejected: Array<{ url: string; reason: string }> }>;
   exportOpml(): Promise<string>;
   listInterests(): Promise<ManualInterest[]>;
+  listLearnedPreferences(): Promise<Record<string, number>>;
   addInterest(value: string): Promise<ManualInterest>;
   removeInterest(interestId: string): Promise<void>;
   listSuggestions(): Promise<InterestSuggestion[]>;

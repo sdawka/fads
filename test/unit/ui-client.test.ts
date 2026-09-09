@@ -1,19 +1,32 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createBrowserUiClient } from "../../src/components";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("browser UI client", () => {
   it("keeps personalized reads private and validates an active edition", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ authenticated: true, did: "did:plc:owner" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({
+          authenticated: true,
+          did: "did:plc:owner",
+          expiresAt: "2026-09-15T12:00:00Z",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
     );
 
     const session = await createBrowserUiClient(fetcher).session();
 
-    expect(session).toEqual({ authenticated: true, did: "did:plc:owner" });
+    expect(session).toEqual({
+      authenticated: true,
+      did: "did:plc:owner",
+      expiresAt: "2026-09-15T12:00:00Z",
+    });
     expect(fetcher).toHaveBeenCalledWith(
       "/api/v1/session",
       expect.objectContaining({ credentials: "same-origin", cache: "no-store" }),
@@ -115,5 +128,18 @@ describe("browser UI client", () => {
     await expect(createBrowserUiClient(fetcher).session()).rejects.toThrow(
       "Invalid session response.",
     );
+  });
+
+  it("announces a confirmed 401 after clearing private offline state", async () => {
+    const browserWindow = new EventTarget();
+    const expired = vi.fn();
+    browserWindow.addEventListener("fads:session-expired", expired);
+    vi.stubGlobal("window", browserWindow);
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 }));
+
+    await expect(createBrowserUiClient(fetcher).activeEdition()).rejects.toThrow(
+      "Your session expired.",
+    );
+    expect(expired).toHaveBeenCalledOnce();
   });
 });

@@ -15,6 +15,10 @@ describe("Worker fetch routing", () => {
       expect(response.headers.get("referrer-policy")).toBe("no-referrer");
       expect(response.headers.get("x-content-type-options")).toBe("nosniff");
       expect(response.headers.get("permissions-policy")).toContain("camera=()");
+      expect(response.headers.get("content-security-policy")).toContain(
+        "img-src 'self' data: https:",
+      );
+      expect(response.headers.get("content-security-policy")).toContain("media-src 'self' https:");
     }
   });
 

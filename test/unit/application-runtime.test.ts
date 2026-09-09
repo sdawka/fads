@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleApplicationRuntime } from "../../src/application-runtime";
+import { handleApplicationRuntime, enqueueSourceBatches } from "../../src/application-runtime";
 
 const config = {
   OWNER_DID: "did:plc:owner123",
@@ -68,9 +68,65 @@ describe("application runtime assembly", () => {
     expect(privateResponse?.headers.get("cache-control")).toBe("private, no-store");
   });
 
+  it("rechecks authentication inside the mutation lock after an earlier inspection", async () => {
+    const env = environment();
+    const session = {
+      readAppSession: vi
+        .fn()
+        .mockResolvedValueOnce({
+          did: config.OWNER_DID,
+          absoluteExpiresAt: Date.now() + 60_000,
+          generation: 0,
+        })
+        .mockResolvedValue(undefined),
+      touchAppSession: vi.fn(async () => true),
+      getAuthGeneration: vi.fn(async () => 1),
+      tryAcquireRefreshLock: vi.fn(async () => true),
+      releaseRefreshLock: vi.fn(async () => undefined),
+    };
+    env.getByName.mockReturnValue(session);
+    const response = await handleApplicationRuntime(
+      new Request("https://fads.cc/api/v1/sources", {
+        method: "POST",
+        headers: {
+          cookie: "fads_session=old-session",
+          "content-type": "application/json",
+          "idempotency-key": "test-key",
+        },
+        body: JSON.stringify({
+          adapter: "rss",
+          displayName: "Example",
+          url: "https://example.com/feed.xml",
+          config: {},
+        }),
+      }),
+      env as never,
+    );
+    expect(response?.status).toBe(409);
+    expect(session.readAppSession).toHaveBeenCalledTimes(2);
+    expect(session.releaseRefreshLock).toHaveBeenCalledOnce();
+  });
+
   it("fails closed on private routes when production configuration is absent", async () => {
     await expect(
       handleApplicationRuntime(new Request("https://fads.cc/api/v1/session"), {} as never),
     ).rejects.toThrow("owner DID");
   });
+});
+
+it("reports only the unaccepted suffix when a later queue batch fails", async () => {
+  const messages = Array.from({ length: 201 }, (_, index) => ({
+    version: 1 as const,
+    kind: "sync_source" as const,
+    ownerId: "did:plc:owner",
+    sourceId: `source:${index}`,
+    workId: `work:${index}`,
+  }));
+  const sendBatch = vi
+    .fn()
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("queue unavailable"));
+  const result = await enqueueSourceBatches({ sendBatch }, messages);
+  expect(sendBatch).toHaveBeenCalledTimes(2);
+  expect(result.failedSourceIds).toEqual(messages.slice(100).map((message) => message.sourceId));
 });

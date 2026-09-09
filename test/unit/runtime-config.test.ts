@@ -35,11 +35,35 @@ describe("runtime configuration", () => {
     [{ ...validEnv(), OWNER_DID: "alice.test" }, "owner DID"],
     [{ ...validEnv(), APP_ORIGIN: "http://fads.cc" }, "HTTPS origin"],
     [{ ...validEnv(), APP_ORIGIN: "https://fads.cc/app" }, "HTTPS origin"],
+    [{ ...validEnv(), APP_ORIGIN: "https://owner:secret@fads.cc" }, "HTTPS origin"],
     [{ ...validEnv(), ATPROTO_OAUTH_PRIVATE_JWKS: "not json" }, "OAuth private JWKs"],
     [
       {
         ...validEnv(),
         ATPROTO_OAUTH_PRIVATE_JWKS: JSON.stringify([{ ...privateKey, d: undefined }]),
+      },
+      "OAuth private JWKs",
+    ],
+    [
+      {
+        ...validEnv(),
+        ATPROTO_OAUTH_PRIVATE_JWKS: JSON.stringify([{ ...privateKey, alg: "ES384" }]),
+      },
+      "OAuth private JWKs",
+    ],
+    [
+      {
+        ...validEnv(),
+        ATPROTO_OAUTH_PRIVATE_JWKS: JSON.stringify([{ ...privateKey, crv: "P-384" }]),
+      },
+      "OAuth private JWKs",
+    ],
+    [
+      {
+        ...validEnv(),
+        ATPROTO_OAUTH_PRIVATE_JWKS: JSON.stringify([
+          { kty: "RSA", kid: "rsa", alg: "RS256", n: "n", e: "AQAB", d: "private-d" },
+        ]),
       },
       "OAuth private JWKs",
     ],

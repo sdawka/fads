@@ -23,21 +23,45 @@ class MemoryOwnerSession {
   readonly oauth = new Map<string, unknown>();
   readonly refreshLocks = new Map<string, string>();
   oauthStarts = 0;
+  generation = 1;
+
+  getAuthGeneration() {
+    return Promise.resolve(this.generation);
+  }
+
+  async resetAuthentication() {
+    this.generation += 1;
+    this.apps.clear();
+    this.states.clear();
+    this.oauth.clear();
+    this.refreshLocks.clear();
+    this.oauthStarts = 0;
+    return this.generation;
+  }
+
+  private assertGeneration(generation?: number) {
+    if (generation !== undefined && generation !== this.generation) {
+      throw new Error("Authentication generation changed");
+    }
+  }
 
   async createAppSession(input: {
     tokenHash: string;
     did: string;
     idleExpiresAt: number;
     absoluteExpiresAt: number;
+    generation?: number;
   }) {
+    this.assertGeneration(input.generation);
     this.apps.set(input.tokenHash, input);
+    return true;
   }
 
   async readAppSession(input: { tokenHash: string; now: number }) {
     const app = this.apps.get(input.tokenHash);
     if (!app || app.idleExpiresAt <= input.now || app.absoluteExpiresAt <= input.now)
       return undefined;
-    return { did: app.did };
+    return { did: app.did, absoluteExpiresAt: app.absoluteExpiresAt, generation: this.generation };
   }
 
   async deleteAppSession(input: { tokenHash: string }) {
@@ -50,8 +74,9 @@ class MemoryOwnerSession {
 
   async touchAppSession(input: { tokenHash: string; now: number; idleExpiresAt: number }) {
     const app = this.apps.get(input.tokenHash);
-    if (app && app.absoluteExpiresAt > input.now)
-      app.idleExpiresAt = Math.min(input.idleExpiresAt, app.absoluteExpiresAt);
+    if (!app || app.idleExpiresAt <= input.now || app.absoluteExpiresAt <= input.now) return false;
+    app.idleExpiresAt = Math.min(input.idleExpiresAt, app.absoluteExpiresAt);
+    return true;
   }
 
   async getOAuthState(input: { key: string }) {
@@ -60,15 +85,18 @@ class MemoryOwnerSession {
     return value;
   }
 
-  async putOAuthState(input: { key: string; value: unknown }) {
+  async putOAuthState(input: { key: string; value: unknown; generation?: number }) {
+    this.assertGeneration(input.generation);
     this.states.set(input.key, input.value);
+    return true;
   }
 
   async deleteOAuthState(input: { key: string }) {
     this.states.delete(input.key);
   }
 
-  async tryStartOAuth() {
+  async tryStartOAuth(input?: { generation?: number }) {
+    this.assertGeneration(input?.generation);
     this.oauthStarts += 1;
     return this.oauthStarts <= 6;
   }
@@ -77,15 +105,18 @@ class MemoryOwnerSession {
     return this.oauth.get(input.did);
   }
 
-  async putOAuthSession(input: { did: string; value: unknown }) {
+  async putOAuthSession(input: { did: string; value: unknown; generation?: number }) {
+    this.assertGeneration(input.generation);
     this.oauth.set(input.did, input.value);
+    return true;
   }
 
   async deleteOAuthSession(input: { did: string }) {
     this.oauth.delete(input.did);
   }
 
-  async tryAcquireRefreshLock(input: { name: string; holder: string }) {
+  async tryAcquireRefreshLock(input: { name: string; holder: string; generation?: number }) {
+    this.assertGeneration(input.generation);
     const existing = this.refreshLocks.get(input.name);
     if (existing && existing !== input.holder) return false;
     this.refreshLocks.set(input.name, input.holder);
@@ -96,7 +127,8 @@ class MemoryOwnerSession {
     if (this.refreshLocks.get(input.name) === input.holder) this.refreshLocks.delete(input.name);
   }
 
-  async renewRefreshLock(input: { name: string; holder: string }) {
+  async renewRefreshLock(input: { name: string; holder: string; generation?: number }) {
+    this.assertGeneration(input.generation);
     return this.refreshLocks.get(input.name) === input.holder;
   }
 }
@@ -264,6 +296,87 @@ describe("AT Protocol owner authentication", () => {
     await expect(
       auth.inspect(new Request("https://fads.example", { headers: { cookie } })),
     ).resolves.toBeUndefined();
+  });
+
+  it("reports the original absolute expiry throughout an active session", async () => {
+    const session = new MemoryOwnerSession();
+    let timestamp = Date.parse("2026-09-08T12:00:00.000Z");
+    const auth = createAtprotoAuth({
+      ownerDid,
+      origin: "https://fads.example",
+      privateJwks,
+      session,
+      now: () => timestamp,
+      oauthFactory: () => ({
+        metadata: {},
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
+        }),
+        callback: async () => ({ session: { did: ownerDid }, state: {} }) as never,
+        restore: async () => ({ did: ownerDid }) as never,
+        revoke: async () => undefined,
+      }),
+    });
+    const callback = await auth.callback(
+      new Request("https://fads.example/oauth/callback?code=code&state=state"),
+    );
+    const cookie = callback.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+    timestamp += 6 * 60 * 60 * 1000;
+    await expect(
+      auth.inspect(new Request("https://fads.example", { headers: { cookie } })),
+    ).resolves.toEqual({
+      did: ownerDid,
+      expiresAt: "2026-09-15T12:00:00.000Z",
+    });
+  });
+
+  it("prevents a callback started before full reset from recreating authentication", async () => {
+    const session = new MemoryOwnerSession();
+    await session.putOAuthState({ key: "before-reset", value: { pkceVerifier: "verifier" } });
+    let stateConsumed!: () => void;
+    let continueCallback!: () => void;
+    const consumed = new Promise<void>((resolve) => {
+      stateConsumed = resolve;
+    });
+    const continuation = new Promise<void>((resolve) => {
+      continueCallback = resolve;
+    });
+    const auth = createAtprotoAuth({
+      ownerDid,
+      origin: "https://fads.example",
+      privateJwks,
+      session,
+      oauthFactory: ({ session: flowSession }) => ({
+        metadata: {},
+        authorize: async () => ({
+          url: new URL("https://pds.example/authorize"),
+          stateId: "state",
+        }),
+        callback: async (params) => {
+          const state = params.get("state") ?? "";
+          if (!(await flowSession.getOAuthState({ key: state }))) throw new Error("missing state");
+          stateConsumed();
+          await continuation;
+          await flowSession.putOAuthSession({ did: ownerDid, value: { refresh: "stale" } });
+          return { session: { did: ownerDid }, state: {} } as never;
+        },
+        restore: async () => ({ did: ownerDid }) as never,
+        revoke: async () => undefined,
+      }),
+    });
+    const callback = auth.callback(
+      new Request("https://fads.example/oauth/callback?code=code&state=before-reset"),
+    );
+    await consumed;
+
+    await auth.logout(new Request("https://fads.example/logout"), { allSessions: true });
+    continueCallback();
+
+    await expect(callback).resolves.toMatchObject({ status: 400 });
+    expect(session.apps.size).toBe(0);
+    expect(session.oauth.size).toBe(0);
   });
 
   it("rejects a non-owner callback without creating an app session", async () => {
@@ -471,11 +584,11 @@ describe("AT Protocol owner authentication", () => {
     timestamp += 7 * 60 * 60 * 1000;
     await expect(
       auth.inspect(new Request("https://fads.example", { headers: { cookie } })),
-    ).resolves.toEqual({ did: ownerDid });
+    ).resolves.toEqual({ did: ownerDid, expiresAt: "1970-01-08T00:00:01.000Z" });
     timestamp += 2 * 60 * 60 * 1000;
     await expect(
       auth.inspect(new Request("https://fads.example", { headers: { cookie } })),
-    ).resolves.toEqual({ did: ownerDid });
+    ).resolves.toEqual({ did: ownerDid, expiresAt: "1970-01-08T00:00:01.000Z" });
   });
 
   it("serializes simultaneous OAuth refreshes through the owner session store", async () => {
@@ -524,6 +637,35 @@ describe("AT Protocol owner authentication", () => {
 
     expect(refreshes).toBe(1);
     expect(maxActiveRefreshes).toBe(1);
+  });
+
+  it("serializes owner mutations through the reset coordination lock", async () => {
+    const auth = createAtprotoAuth({
+      ownerDid,
+      origin: "https://fads.example",
+      privateJwks,
+      session: new MemoryOwnerSession(),
+    });
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const order: string[] = [];
+    const first = auth.withOwnerMutation(async () => {
+      order.push("first:start");
+      await firstGate;
+      order.push("first:end");
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const second = auth.withOwnerMutation(async () => {
+      order.push("second");
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(order).toEqual(["first:start"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["first:start", "first:end", "second"]);
   });
 
   it("restores the configured owner's OAuth session for background ingestion", async () => {

@@ -38,7 +38,9 @@ export function createRuntimeRouter(input: { auth: RuntimeAuth; api: RuntimeApiH
     const owner = await input.auth.inspect(request);
     if (path === "/api/v1/session" && request.method === "GET") {
       return privateJson(
-        owner ? { authenticated: true, did: owner.did } : { authenticated: false },
+        owner
+          ? { authenticated: true, did: owner.did, expiresAt: owner.expiresAt }
+          : { authenticated: false },
       );
     }
     if (!owner) {
