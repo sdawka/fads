@@ -92,3 +92,48 @@ test("demo waits for hydration before accepting its first click", async ({ page 
   await page.getByRole("button", { name: "Grid", exact: true }).click();
   await expect(page.getByRole("list", { name: /edition items/ })).toBeVisible();
 });
+
+test("homepage motion progressively activates real scroll chapters", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("data-motion", "ready");
+
+  const explanation = page.locator(".explanation");
+  await explanation.scrollIntoViewIfNeeded();
+  await expect(explanation).toHaveAttribute("data-motion-state", "visible");
+
+  const connector = explanation.locator(".connector");
+  await expect(connector.locator("path")).toHaveCSS("stroke-dashoffset", "0px");
+});
+
+test("homepage honors reduced motion without hiding content", async ({ browser }) => {
+  const context = await browser.newContext({ reducedMotion: "reduce" });
+  const page = await context.newPage();
+  await page.goto("/");
+
+  await expect(page.locator("html")).toHaveAttribute("data-motion", "reduced");
+  await expect(page.getByRole("heading", { name: "Take back the interface." })).toBeVisible();
+  await expect(page.locator(".garden-tray")).toBeVisible();
+  await expect(page.locator(".explanation")).not.toHaveAttribute("data-motion-state", "hidden");
+
+  await context.close();
+});
+
+test("motion chapters preserve readable contrast while they animate", async ({ page }) => {
+  await page.goto("/");
+
+  for (const selector of [".explanation", ".edition-explanation", ".closing"]) {
+    await page.locator(selector).scrollIntoViewIfNeeded();
+    const results = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
+    expect(results.violations).toEqual([]);
+  }
+});
+
+test("homepage responds when reduced-motion preference changes at runtime", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("data-motion", "ready");
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.locator("html")).toHaveAttribute("data-motion", "reduced");
+  await page.locator(".closing").scrollIntoViewIfNeeded();
+  await expect(page.locator(".closing-copy")).toHaveCSS("animation-name", "none");
+});
